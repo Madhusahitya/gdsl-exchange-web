@@ -1,0 +1,42 @@
+name: CI
+
+# Docker image is built by gdsl-exchange (checks out this repo and pushes to GHCR).
+# This workflow runs build/lint on every push to main.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build --workspace=@cryptoflow/dex-pancake
+      - run: npm run build --workspace=apps/web
+      # Vitest suite is optional locally; build is the production gate.
+
+  trigger-production-build:
+    needs: [test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask gdsl-exchange to build + deploy web image
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "GH_PAT not set — run Build images on gdsl-exchange manually (Actions → workflow_dispatch)."
+            exit 0
+          fi
+          gh api repos/Madhusahitya/gdsl-exchange/dispatches -f event_type=web-updated
