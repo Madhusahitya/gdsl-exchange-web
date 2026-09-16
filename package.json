@@ -29,5 +29,8 @@
     "eslint": "^10.2.0",
     "prettier": "^3.8.2",
     "typescript-eslint": "^8.58.1"
+  },
+  "dependencies": {
+    "pino-pretty": "^13.1.3"
   }
 }
