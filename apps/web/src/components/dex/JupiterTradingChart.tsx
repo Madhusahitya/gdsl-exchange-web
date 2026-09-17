@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type LiveCandle } from '@/lib/api'
+import { connectSocket } from '@/lib/socket'
 
 const INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d'] as const
 type Interval = (typeof INTERVALS)[number]
@@ -198,11 +199,10 @@ export function JupiterTradingChart({
     prevPriceRef.current = null
   }, [symbol])
 
+  // Load candles once on mount or when symbol/interval changes — NO recurring HTTP polling!
   useEffect(() => {
     void refresh()
-    const id = window.setInterval(() => void refresh(), pollMs)
-    return () => window.clearInterval(id)
-  }, [refresh, pollMs])
+  }, [refresh])
 
   // Retry countdown for the empty-error state.
   useEffect(() => {
@@ -211,73 +211,54 @@ export function JupiterTradingChart({
     return () => window.clearInterval(id)
   }, [err])
 
-  // Fast live-price tick — when syncWithOrderBook, parent drives unified Jupiter mid.
+  // Real-time candle updates: when parent drives referencePrice
   useEffect(() => {
-    if (syncWithOrderBook) {
-      if (referencePrice == null || referencePrice <= 0) return
-      setLivePrice(referencePrice)
-      flashPrice(referencePrice)
+    if (referencePrice == null || referencePrice <= 0) return
+    setLivePrice(referencePrice)
+    flashPrice(referencePrice)
+    setData((prev) => {
+      if (prev.length === 0) return prev
+      const next = [...prev]
+      const last = { ...next[next.length - 1]! }
+      last.close = referencePrice
+      last.high = Math.max(last.high, referencePrice)
+      last.low = Math.min(last.low, referencePrice)
+      next[next.length - 1] = last
+      return next
+    })
+  }, [referencePrice, flashPrice])
+
+  // Real-time price and candlestick updates directly via WebSocket (Socket.IO jupiter:ticker)
+  useEffect(() => {
+    if (!symbol) return
+    const socket = connectSocket()
+
+    const onTicker = (ticks: Array<{ symbol: string; lastPrice: number }>) => {
+      if (!Array.isArray(ticks) || ticks.length === 0) return
+      const match = ticks.find((t) => t.symbol === symbol)
+      if (!match || match.lastPrice == null || match.lastPrice <= 0) return
+
+      const p = match.lastPrice
+      setLivePrice(p)
+      flashPrice(p)
+
       setData((prev) => {
         if (prev.length === 0) return prev
         const next = [...prev]
         const last = { ...next[next.length - 1]! }
-        last.close = referencePrice
-        last.high = Math.max(last.high, referencePrice)
-        last.low = Math.min(last.low, referencePrice)
+        last.close = p
+        last.high = Math.max(last.high, p)
+        last.low = Math.min(last.low, p)
         next[next.length - 1] = last
         return next
       })
-      return
     }
-    if (!fetchLivePrice || !symbol) return
-    let cancelled = false
-    const tick = async () => {
-      try {
-        const mode = chartTrade?.markMode ?? 'ask'
-        const ask = chartTrade?.buyPrice
-        const bid = chartTrade?.sellPrice
-        const mark =
-          mode === 'bid' && bid != null && bid > 0
-            ? bid
-            : mode === 'ask' && ask != null && ask > 0
-              ? ask
-              : ask != null && bid != null && ask > 0 && bid > 0
-                ? (ask + bid) / 2
-                : null
-        const p = mark ?? (await fetchLivePrice(symbol))
-        if (cancelled || p == null || p <= 0) return
-        setLivePrice(p)
-        flashPrice(p)
-        setData((prev) => {
-          if (prev.length === 0) return prev
-          const next = [...prev]
-          const last = { ...next[next.length - 1]! }
-          last.close = p
-          last.high = Math.max(last.high, p)
-          last.low = Math.min(last.low, p)
-          next[next.length - 1] = last
-          return next
-        })
-      } catch {
-        /* price tick is best-effort */
-      }
-    }
-    const id = window.setInterval(() => void tick(), 400)
-    void tick()
+
+    socket.on('jupiter:ticker', onTicker)
     return () => {
-      cancelled = true
-      window.clearInterval(id)
+      socket.off('jupiter:ticker', onTicker)
     }
-  }, [
-    fetchLivePrice,
-    symbol,
-    flashPrice,
-    chartTrade?.buyPrice,
-    chartTrade?.sellPrice,
-    chartTrade?.markMode,
-    syncWithOrderBook,
-    referencePrice,
-  ])
+  }, [symbol, flashPrice])
 
   const tradeMark = useMemo(() => {
     const mode = chartTrade?.markMode ?? 'ask'

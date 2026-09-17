@@ -179,8 +179,6 @@ export function JupiterSuperMachinePanel({
 
   useEffect(() => {
     void refresh()
-    const id = setInterval(() => void refresh(), 12_000)
-    return () => clearInterval(id)
   }, [refresh])
 
   // Real-time: push agent activity straight into the terminal via Socket.IO.

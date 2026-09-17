@@ -1,7 +1,6 @@
 'use client'
 
-import { type MarketBoardRow } from '@/lib/api'
-import { useJupiterMarks } from '@/hooks/useJupiterMarks'
+import { type MarketBoardRow, type JupiterExecutableMarks } from '@/lib/api'
 
 function fmtPrice(p: number): string {
   if (!Number.isFinite(p)) return '—'
@@ -20,11 +19,11 @@ function fmtUsdCompact(n: number): string {
 type Props = {
   symbol: string
   row: MarketBoardRow | null
+  marks?: JupiterExecutableMarks | null
 }
 
-export function JupiterTokenHeader({ symbol, row }: Props) {
+export function JupiterTokenHeader({ symbol, row, marks }: Props) {
   const base = symbol.replace(/USDT$/i, '')
-  const marks = useJupiterMarks(symbol, 800)
   const live = marks?.mid ?? row?.lastPrice ?? null
   const chg = row?.priceChangePercent ?? 0
 

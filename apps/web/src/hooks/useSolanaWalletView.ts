@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useActiveWallet, type WalletSource } from '@/context/ActiveWalletContext'
 import { dexJupiter } from '@/lib/api'
+import { connectSocket } from '@/lib/socket'
 
 export type SolanaTokenRow = {
   mint: string
@@ -139,14 +140,21 @@ export function useSolanaWalletView(): SolanaWalletView {
     setLoading(true)
   }, [target])
 
+  const refreshRef = useRef(refresh)
+  refreshRef.current = refresh
+
   useEffect(() => {
     if (awaitingAddress) return
-    void refresh()
-    const id = window.setInterval(() => void refresh(), 30_000)
-    return () => window.clearInterval(id)
-    // Keyed on the wallet rather than on `refresh`, whose identity changes with
-    // every balance update and would otherwise restart the interval constantly.
-  }, [target, awaitingAddress, refresh])
+    void refreshRef.current()
+
+    const socket = connectSocket()
+    const onTrade = () => void refreshRef.current()
+    socket.on('trade:executed', onTrade)
+
+    return () => {
+      socket.off('trade:executed', onTrade)
+    }
+  }, [target, awaitingAddress])
 
   return useMemo(
     () => ({

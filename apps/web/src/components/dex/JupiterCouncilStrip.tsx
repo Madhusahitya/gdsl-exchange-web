@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { dexJupiter, type CouncilStatus, type JupiterSuperMachineStatus } from '@/lib/api'
 
+import { connectSocket } from '@/lib/socket'
+
 type Props = {
   watchSymbol: string | null
 }
@@ -18,8 +20,18 @@ export function JupiterCouncilStrip({ watchSymbol }: Props) {
       void dexJupiter.superMachineStatus().then(setSm).catch(() => null)
     }
     load()
-    const id = window.setInterval(load, 8_000)
-    return () => window.clearInterval(id)
+
+    const socket = connectSocket()
+    const onCouncil = () => void dexJupiter.councilStatus().then(setCouncil).catch(() => null)
+    const onActivity = () => void dexJupiter.superMachineStatus().then(setSm).catch(() => null)
+
+    socket.on('council:decision', onCouncil)
+    socket.on('super-machine:activity', onActivity)
+
+    return () => {
+      socket.off('council:decision', onCouncil)
+      socket.off('super-machine:activity', onActivity)
+    }
   }, [])
 
   const last = council?.lastDecision

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { dexJupiter, type JupiterDepthLevel } from '@/lib/api'
+import { connectSocket } from '@/lib/socket'
 import { usePageVisible } from '@/hooks/usePageVisible'
 
 function fmtPx(n: number): string {
@@ -46,12 +47,15 @@ type Props = {
   pollMs?: number
 }
 
+const depthInFlight = new Map<string, Promise<Awaited<ReturnType<typeof dexJupiter.depth>>>>()
+const depthCache = new Map<string, { at: number; data: Awaited<ReturnType<typeof dexJupiter.depth>> }>()
+
 export function JupiterOrderBookPanel({
   symbol,
   label,
   depth = 12,
   className = '',
-  pollMs = 2_000,
+  pollMs = 3_500,
 }: Props) {
   const [bids, setBids] = useState<JupiterDepthLevel[]>([])
   const [asks, setAsks] = useState<JupiterDepthLevel[]>([])
@@ -64,8 +68,31 @@ export function JupiterOrderBookPanel({
 
   const refresh = useCallback(async () => {
     if (!symbol) return
+    const key = symbol
+    const fetchDepth = Math.max(depth, 14)
+    const now = Date.now()
+    const cached = depthCache.get(key)
+    if (cached && now - cached.at < 2_000) {
+      setBids(cached.data.bids.slice(0, depth))
+      setAsks(cached.data.asks.slice(0, depth))
+      setMid(cached.data.mid)
+      setBid(cached.data.bid)
+      setAsk(cached.data.ask)
+      setSpreadBps(cached.data.spreadBps)
+      setLoading(false)
+      return
+    }
+
     try {
-      const d = await dexJupiter.depth(symbol, depth)
+      let req = depthInFlight.get(key)
+      if (!req) {
+        req = dexJupiter.depth(symbol, fetchDepth).finally(() => {
+          depthInFlight.delete(key)
+        })
+        depthInFlight.set(key, req)
+      }
+      const d = await req
+      depthCache.set(key, { at: Date.now(), data: d })
       setBids(d.bids.slice(0, depth))
       setAsks(d.asks.slice(0, depth))
       setMid(d.mid)
@@ -82,10 +109,29 @@ export function JupiterOrderBookPanel({
   useEffect(() => {
     setLoading(true)
     void refresh()
-    if (!symbol || !visible) return
-    const id = window.setInterval(() => void refresh(), pollMs)
-    return () => window.clearInterval(id)
-  }, [refresh, symbol, pollMs, visible])
+  }, [refresh, symbol])
+
+  // Stream live mid/bid/ask updates from Socket.IO jupiter:ticker without HTTP polling
+  useEffect(() => {
+    if (!symbol) return
+    const socket = connectSocket()
+
+    const onTicker = (ticks: Array<{ symbol: string; lastPrice: number }>) => {
+      if (!Array.isArray(ticks) || ticks.length === 0) return
+      const match = ticks.find((t) => t.symbol === symbol)
+      if (!match || match.lastPrice == null || match.lastPrice <= 0) return
+
+      const p = match.lastPrice
+      setMid(p)
+      setBid((prev) => (prev != null && spreadBps != null ? p - (p * spreadBps) / 20_000 : prev))
+      setAsk((prev) => (prev != null && spreadBps != null ? p + (p * spreadBps) / 20_000 : prev))
+    }
+
+    socket.on('jupiter:ticker', onTicker)
+    return () => {
+      socket.off('jupiter:ticker', onTicker)
+    }
+  }, [symbol, spreadBps])
 
   const bidRows = useMemo(() => withCumulative(bids, 'bid'), [bids])
   const askRows = useMemo(() => withCumulative(asks, 'ask'), [asks])

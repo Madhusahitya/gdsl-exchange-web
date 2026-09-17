@@ -22,6 +22,8 @@ import {
 } from '@/lib/api'
 import { getApiOriginForErrors } from '@/lib/apiBaseUrl'
 import { useSocket } from '@/hooks/useSocket'
+import { connectSocket } from '@/lib/socket'
+import { RefreshCw } from 'lucide-react'
 import {
   buildChainDashboardView,
   type HoldingRow,
@@ -165,7 +167,7 @@ export default function DashboardPage() {
   const [exitEditSl, setExitEditSl] = useState('')
   const [exitEditTrail, setExitEditTrail] = useState(false)
   const [exitEditBusy, setExitEditBusy] = useState(false)
-  const pollBackoffMsRef = useRef(2_000)
+  const [liveMarks, setLiveMarks] = useState<Record<string, number>>({})
   const loadInFlightRef = useRef<Promise<void> | null>(null)
   const socketRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [walletView, setWalletView] = useState<WalletView>('all')
@@ -326,7 +328,6 @@ export default function DashboardPage() {
         } else {
           setLoadErr('')
         }
-        pollBackoffMsRef.current = 2_000
       } else {
         const reason = summaryResult.reason as {
           response?: { status?: number }
@@ -351,7 +352,6 @@ export default function DashboardPage() {
               ? 'Server is busy or restarting — retrying automatically. Your data will return shortly.'
               : `Could not refresh dashboard summary (${apiOrigin}). Trades below may still load.`,
         )
-        pollBackoffMsRef.current = Math.min(60_000, pollBackoffMsRef.current * 2)
       }
 
       if (tradesResult.status === 'fulfilled') {
@@ -488,8 +488,6 @@ export default function DashboardPage() {
       return
     }
     void loadCexPosition()
-    const id = window.setInterval(() => void loadCexPosition(), 15_000)
-    return () => window.clearInterval(id)
   }, [hasAutoBinanceOpen, loadCexPosition])
 
   const hasJupiterOpen = useMemo(
@@ -512,8 +510,6 @@ export default function DashboardPage() {
       return
     }
     void loadJupPositions()
-    const id = window.setInterval(() => void loadJupPositions(), 15_000)
-    return () => window.clearInterval(id)
   }, [hasJupiterOpen, loadJupPositions])
 
   const jupPositionFor = useCallback(
@@ -634,53 +630,59 @@ export default function DashboardPage() {
     ],
   )
 
-  /** Periodic refresh — backs off when the API struggles (avoids 429 pile-up). */
+  /** Event-driven refresh — fires on user actions (trades, wallet connect, transfer). */
   useEffect(() => {
-    let cancelled = false
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const tick = () => {
-      void load().finally(() => {
-        if (!cancelled) {
-          timer = setTimeout(tick, pollBackoffMsRef.current)
-        }
-      })
+    const onRefresh = () => {
+      void load()
+      void loadCexPosition()
+      void loadJupPositions()
     }
-    timer = setTimeout(tick, pollBackoffMsRef.current)
-    return () => {
-      cancelled = true
-      if (timer) clearTimeout(timer)
-    }
-  }, [load])
-
-  useEffect(() => {
-    const onRefresh = () => load()
     window.addEventListener('dashboard:refresh', onRefresh)
     return () => window.removeEventListener('dashboard:refresh', onRefresh)
-  }, [load])
+  }, [load, loadCexPosition, loadJupPositions])
 
   /**
-   * Real-time refresh: any trade execution or portfolio update from the API
-   * triggers an immediate summary reload so the headline numbers move with
-   * the user's actual activity (not just the 10s poll).
+   * Real-time trade execution: reload summary and positions when a trade executes.
    */
   useSocket({
     onTradeExecuted: () => {
       if (socketRefreshRef.current) clearTimeout(socketRefreshRef.current)
-      socketRefreshRef.current = setTimeout(() => void load(), 600)
+      socketRefreshRef.current = setTimeout(() => {
+        void load()
+        void loadCexPosition()
+        void loadJupPositions()
+      }, 600)
     },
   })
+
+  /**
+   * Stream live market marks in real-time via Socket.IO jupiter:ticker.
+   * Eliminates HTTP polling for mark prices, market value, and unrealized PnL.
+   */
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    const handler = () => {
-      if (socketRefreshRef.current) clearTimeout(socketRefreshRef.current)
-      socketRefreshRef.current = setTimeout(() => void load(), 600)
+    const socket = connectSocket()
+    const onTicker = (ticks: Array<{ symbol: string; lastPrice: number }>) => {
+      if (!Array.isArray(ticks) || ticks.length === 0) return
+      setLiveMarks((prev) => {
+        let changed = false
+        const next = { ...prev }
+        for (const t of ticks) {
+          if (t?.symbol && t.lastPrice != null && t.lastPrice > 0) {
+            const sym = t.symbol.toUpperCase()
+            if (next[sym] !== t.lastPrice) {
+              next[sym] = t.lastPrice
+              changed = true
+            }
+          }
+        }
+        return changed ? next : prev
+      })
     }
-    window.addEventListener('portfolio:update', handler)
+    socket.on('jupiter:ticker', onTicker)
     return () => {
-      window.removeEventListener('portfolio:update', handler)
-      if (socketRefreshRef.current) clearTimeout(socketRefreshRef.current)
+      socket.off('jupiter:ticker', onTicker)
     }
-  }, [load])
+  }, [])
 
   /** Binance spot marks from open positions — same feed as DEX signals / auto-exit. */
   const handleSellOpen = useCallback(
@@ -735,16 +737,22 @@ export default function DashboardPage() {
   const botLiveMarkBySymbol = useMemo(() => {
     const m = new Map<string, number>()
     for (const p of summary?.openPositions ?? []) {
-      if (p.markPrice == null || !Number.isFinite(p.markPrice)) continue
       const sym = p.symbol.toUpperCase()
+      const mark = liveMarks[sym] ?? p.markPrice
+      if (mark == null || !Number.isFinite(mark)) continue
       if (p.strategyBook?.includes('1inch')) {
-        m.set(`${sym}:1inch`, p.markPrice)
+        m.set(`${sym}:1inch`, mark)
       } else {
-        m.set(sym, p.markPrice)
+        m.set(sym, mark)
+      }
+    }
+    for (const [sym, px] of Object.entries(liveMarks)) {
+      if (px != null && Number.isFinite(px) && !m.has(sym)) {
+        m.set(sym, px)
       }
     }
     return m
-  }, [summary?.openPositions])
+  }, [summary?.openPositions, liveMarks])
 
   const fmt = (n: number) =>
     n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -847,7 +855,19 @@ export default function DashboardPage() {
             {label}
           </button>
         ))}
-        <span className="ml-auto text-[10px] text-zinc-600">{walletViewLabel}</span>
+        <div className="ml-auto flex items-center gap-3">
+          <span className="text-[10px] text-zinc-600">{walletViewLabel}</span>
+          <button
+            type="button"
+            onClick={() => refreshPositionSources()}
+            disabled={refreshSlow}
+            title="Refresh dashboard data"
+            className="flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-medium text-zinc-300 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3 w-3 ${refreshSlow ? 'animate-spin text-violet-400' : ''}`} />
+            <span>{refreshSlow ? 'Refreshing…' : 'Refresh'}</span>
+          </button>
+        </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -1193,7 +1213,11 @@ export default function DashboardPage() {
                   </tr>
                 ) : null}
                 {filteredOpenPositions.map((pos) => {
-                  const positive = pos.unrealizedPnlUsd >= 0
+                  const posMark = liveMarks[pos.symbol.toUpperCase()] ?? pos.markPrice
+                  const posMarketValueUsd = posMark != null && pos.quantity > 0 ? pos.quantity * posMark : pos.marketValueUsd
+                  const posUnrealizedPnlUsd = posMarketValueUsd - pos.costBasisUsd
+                  const posUnrealizedPnlPct = pos.costBasisUsd > 0 ? (posUnrealizedPnlUsd / pos.costBasisUsd) * 100 : pos.unrealizedPnlPct
+                  const positive = posUnrealizedPnlUsd >= 0
                   const isAutoBinance = isAutoBinanceBook(pos.strategyBook)
                   const cexMatch = isAutoBinance && cexLotMatchesSymbol(pos.symbol, cexOpenPos)
                   const canSell =
@@ -1220,14 +1244,14 @@ export default function DashboardPage() {
 
                   // What a Skim would bank right now, and why it might be blocked.
                   const livePnlUsd = cexMatch
-                    ? (cexOpenPos?.pnlUsd ?? pos.unrealizedPnlUsd)
+                    ? (cexOpenPos?.pnlUsd ?? posUnrealizedPnlUsd)
                     : isJupiter
-                      ? (jup?.estNetPnlUsd ?? pos.unrealizedPnlUsd)
-                      : pos.unrealizedPnlUsd
+                      ? (jup?.estNetPnlUsd ?? posUnrealizedPnlUsd)
+                      : posUnrealizedPnlUsd
                   const skimmableUsd = cexMatch
                     ? (cexOpenPos?.skimmableUsd ?? 0)
                     : isJupiter
-                      ? Math.max(0, Math.min(livePnlUsd, pos.marketValueUsd * 0.4))
+                      ? Math.max(0, Math.min(livePnlUsd, posMarketValueUsd * 0.4))
                       : 0
                   const skimBlocked: string | null = cexMatch
                     ? (cexOpenPos?.skimBlockedReason ?? null)
@@ -1263,20 +1287,20 @@ export default function DashboardPage() {
                           {pos.avgEntryPrice != null ? `$${fmt(pos.avgEntryPrice)}` : '—'}
                         </td>
                         <td className="px-4 py-3 text-zinc-300">
-                          {pos.markPrice != null ? (
-                            <LiveNumber value={pos.markPrice}>${fmt(pos.markPrice)}</LiveNumber>
+                          {posMark != null ? (
+                            <LiveNumber value={posMark}>${fmt(posMark)}</LiveNumber>
                           ) : (
                             '—'
                           )}
                         </td>
                         <td className="px-4 py-3 text-zinc-300">${fmt(pos.costBasisUsd)}</td>
                         <td className="px-4 py-3 text-white">
-                          <LiveNumber value={pos.marketValueUsd}>${fmt(pos.marketValueUsd)}</LiveNumber>
+                          <LiveNumber value={posMarketValueUsd}>${fmt(posMarketValueUsd)}</LiveNumber>
                         </td>
                         <td className={`px-4 py-3 ${positive ? 'text-emerald-300' : 'text-rose-300'}`}>
-                          <LiveNumber value={pos.unrealizedPnlUsd}>{fmtSignedPnl(pos.unrealizedPnlUsd)}</LiveNumber>
-                          {pos.unrealizedPnlPct != null ? (
-                            <span className="ml-1 text-[10px] text-zinc-500">({fmtPct(pos.unrealizedPnlPct)})</span>
+                          <LiveNumber value={posUnrealizedPnlUsd}>{fmtSignedPnl(posUnrealizedPnlUsd)}</LiveNumber>
+                          {posUnrealizedPnlPct != null ? (
+                            <span className="ml-1 text-[10px] text-zinc-500">({fmtPct(posUnrealizedPnlPct)})</span>
                           ) : null}
                           {hasExitControls && effTp != null && effSl != null ? (
                             <div
