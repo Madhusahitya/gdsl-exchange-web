@@ -12,6 +12,7 @@ import axios from 'axios'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { engine, type ManualDesk, type ManualPreflight } from '@/lib/api'
+import { useSocket } from '@/hooks/useSocket'
 
 type Props = {
   symbol: string
@@ -65,8 +66,18 @@ export function CexManualTradePanel({ symbol, onTraded }: Props) {
     setLoading(true)
     setPreflight(null)
     void refresh()
-    const id = window.setInterval(() => void refresh(), 20_000)
-    return () => window.clearInterval(id)
+  }, [refresh])
+
+  useSocket({
+    onTradeExecuted: () => {
+      void refresh()
+    },
+  })
+
+  useEffect(() => {
+    const onRefresh = () => void refresh()
+    window.addEventListener('dashboard:refresh', onRefresh)
+    return () => window.removeEventListener('dashboard:refresh', onRefresh)
   }, [refresh])
 
   const request = useMemo(

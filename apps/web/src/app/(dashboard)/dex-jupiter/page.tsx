@@ -40,6 +40,7 @@ import {
   type ExecutionCompareResult,
   type MarketBoardRow,
   type JupiterLimitOrder,
+  type LiveCandle,
 } from '@/lib/api'
 
 const JupiterPredictionsPanel = dynamic(
@@ -159,6 +160,36 @@ function DexJupiterContent() {
 
   const fetchJupiterCandles = useCallback(
     async (symbol: string, interval: '1m' | '5m' | '15m' | '1h' | '4h' | '1d', limit: number) => {
+      // 1. Direct public CDN fetch for Binance-paired tokens (<80ms)
+      try {
+        const binanceSym = symbol.toUpperCase()
+        const r = await fetch(
+          `https://data-api.binance.vision/api/v3/klines?symbol=${encodeURIComponent(binanceSym)}&interval=${interval}&limit=${limit}`,
+          { signal: AbortSignal.timeout(3500) },
+        )
+        if (r.ok) {
+          const raw = (await r.json()) as Array<Array<string | number>>
+          if (Array.isArray(raw) && raw.length > 0) {
+            const candles: LiveCandle[] = raw.map((row) => ({
+              openTime: Number(row[0]),
+              open: parseFloat(String(row[1])),
+              high: parseFloat(String(row[2])),
+              low: parseFloat(String(row[3])),
+              close: parseFloat(String(row[4])),
+              volume: parseFloat(String(row[5])),
+              closeTime: Number(row[6]),
+            }))
+            return {
+              candles,
+              footerExtra: 'Solana live',
+            }
+          }
+        }
+      } catch {
+        /* fallback to backend API */
+      }
+
+      // 2. Backend fallback
       const result = await dexJupiter.candles(symbol, interval, limit)
       const block =
         result.jupiterBlockId != null ? `Solana block ${result.jupiterBlockId}` : 'Solana live'
@@ -676,10 +707,18 @@ function DexJupiterContent() {
     return () => window.removeEventListener('dashboard:refresh', onFilled)
   }, [])
 
-  const chartBuyPrice = quote?.jupiterBuyPrice ?? quote?.executablePrice ?? jupiterMarks?.ask ?? null
+  const fallbackRefPrice = selectedRow?.lastPrice && selectedRow.lastPrice > 0 ? selectedRow.lastPrice : null
+  const chartBuyPrice =
+    quote?.jupiterBuyPrice ??
+    quote?.executablePrice ??
+    jupiterMarks?.ask ??
+    (fallbackRefPrice != null ? fallbackRefPrice * 1.0005 : null)
   const chartSellPrice =
-    quote?.jupiterSellPrice ?? openOnSelected?.liveSellPrice ?? jupiterMarks?.bid ?? null
-  const jupiterMid = jupiterMarks?.mid ?? null
+    quote?.jupiterSellPrice ??
+    openOnSelected?.liveSellPrice ??
+    jupiterMarks?.bid ??
+    (fallbackRefPrice != null ? fallbackRefPrice * 0.9995 : null)
+  const jupiterMid = jupiterMarks?.mid ?? fallbackRefPrice ?? null
 
   // When you open/select a bag, start in Sell mode so the big chart price = Live price (bid).
   useEffect(() => {
@@ -810,6 +849,9 @@ function DexJupiterContent() {
               depth={14}
               className="h-full min-h-[420px]"
               pollMs={3_500}
+              fallbackMid={jupiterMid}
+              fallbackBid={chartSellPrice}
+              fallbackAsk={chartBuyPrice}
             />
           </div>
           <div className="min-h-[420px] min-w-0 flex-1 overflow-hidden xl:min-h-[520px]">
@@ -853,6 +895,9 @@ function DexJupiterContent() {
             depth={12}
             className="max-h-[320px]"
             pollMs={3_500}
+            fallbackMid={jupiterMid}
+            fallbackBid={chartSellPrice}
+            fallbackAsk={chartBuyPrice}
           />
         </div>
 

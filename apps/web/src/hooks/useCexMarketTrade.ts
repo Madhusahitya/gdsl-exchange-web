@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import axios from 'axios'
 import { toast } from 'sonner'
 import { engine, type ManualDesk } from '@/lib/api'
+import { useSocket } from '@/hooks/useSocket'
 
 const MIN_ORDER = 5
 
@@ -22,7 +23,11 @@ function estimateBuyFillUsd(spend: number, ask: number | null, stepSize: number 
   return qty * ask
 }
 
-export function useCexMarketTrade(symbol: string, onTraded?: () => void) {
+export function useCexMarketTrade(
+  symbol: string,
+  onTraded?: () => void,
+  livePrices?: { buyPrice?: number | null; sellPrice?: number | null },
+) {
   const [desk, setDesk] = useState<ManualDesk | null>(null)
   const [loading, setLoading] = useState(true)
   const [amount, setAmount] = useState('5')
@@ -57,14 +62,24 @@ export function useCexMarketTrade(symbol: string, onTraded?: () => void) {
   useEffect(() => {
     setLoading(true)
     void refresh()
-    const id = window.setInterval(() => void refresh(), 3_000)
-    return () => window.clearInterval(id)
+  }, [refresh])
+
+  useSocket({
+    onTradeExecuted: () => {
+      void refresh()
+    },
+  })
+
+  useEffect(() => {
+    const onRefresh = () => void refresh()
+    window.addEventListener('dashboard:refresh', onRefresh)
+    return () => window.removeEventListener('dashboard:refresh', onRefresh)
   }, [refresh])
 
   const quoteAsset = desk?.quoteAsset ?? 'USDT'
   const baseAsset = desk?.baseAsset ?? symbol.replace(/USDT$/i, '')
-  const buyPrice = desk?.book?.ask ?? desk?.book?.mid ?? null
-  const sellPrice = desk?.book?.bid ?? desk?.book?.mid ?? null
+  const buyPrice = livePrices?.buyPrice ?? desk?.book?.ask ?? desk?.book?.mid ?? null
+  const sellPrice = livePrices?.sellPrice ?? desk?.book?.bid ?? desk?.book?.mid ?? null
   const maxSpend =
     desk != null
       ? Math.min(desk.limits.maxOrderUsd, Math.floor(desk.balances.freeQuoteUsd * 0.95 * 100) / 100)

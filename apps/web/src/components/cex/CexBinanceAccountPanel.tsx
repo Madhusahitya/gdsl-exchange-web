@@ -10,6 +10,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { exchange, risk } from '@/lib/api'
+import { useSocket } from '@/hooks/useSocket'
 
 type Connection = {
   id: string
@@ -113,8 +114,18 @@ export function CexBinanceAccountPanel({ symbol, onReadyChange, onUsdtChange }: 
 
   useEffect(() => {
     void refresh()
-    const id = window.setInterval(() => void refresh(), 15_000)
-    return () => window.clearInterval(id)
+  }, [refresh])
+
+  useSocket({
+    onTradeExecuted: () => {
+      void refresh()
+    },
+  })
+
+  useEffect(() => {
+    const onRefresh = () => void refresh()
+    window.addEventListener('dashboard:refresh', onRefresh)
+    return () => window.removeEventListener('dashboard:refresh', onRefresh)
   }, [refresh])
 
   useEffect(() => {
