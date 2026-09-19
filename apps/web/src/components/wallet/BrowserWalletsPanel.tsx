@@ -310,9 +310,8 @@ function SolanaWalletCard() {
                         key={a}
                         type="button"
                         onClick={() => setFundAsset(a)}
-                        className={`rounded px-2.5 py-1 text-xs transition ${
-                          fundAsset === a ? 'bg-violet-600 text-white' : 'text-zinc-400 hover:text-white'
-                        }`}
+                        className={`rounded px-2.5 py-1 text-xs transition ${fundAsset === a ? 'bg-violet-600 text-white' : 'text-zinc-400 hover:text-white'
+                          }`}
                       >
                         {a}
                       </button>
