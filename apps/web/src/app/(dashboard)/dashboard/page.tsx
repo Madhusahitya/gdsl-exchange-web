@@ -76,6 +76,41 @@ function isJupiterBook(strategyBook?: string | null): boolean {
   return (strategyBook ?? '').toLowerCase().includes('jupiter')
 }
 
+function liveMarkLookup(liveMarks: Record<string, number>, symbol: string): number | undefined {
+  const s = symbol.toUpperCase()
+  const withUsdt = s.endsWith('USDT') ? s : `${s}USDT`
+  const base = s.replace(/USDT$/, '')
+  const v = liveMarks[s] ?? liveMarks[withUsdt] ?? liveMarks[base]
+  return v != null && Number.isFinite(v) && v > 0 ? v : undefined
+}
+
+/** Exit mark for the venue that actually holds the lot — never mix CEX last with Jupiter bid. */
+function venueExitMark(opts: {
+  strategyBook?: string | null
+  symbol: string
+  markPrice: number | null
+  binanceRefPrice?: number | null
+  liveMarks: Record<string, number>
+  jupSell?: number | null
+  jupMid?: number | null
+  cexMark?: number | null
+  cexMatch: boolean
+}): number | null {
+  const { strategyBook, symbol, markPrice, binanceRefPrice, liveMarks, jupSell, jupMid, cexMark, cexMatch } =
+    opts
+  if (isJupiterBook(strategyBook)) {
+    if (jupSell != null && jupSell > 0) return jupSell
+    if (jupMid != null && jupMid > 0) return jupMid
+    return liveMarkLookup(liveMarks, symbol) ?? markPrice
+  }
+  if (isAutoBinanceBook(strategyBook)) {
+    if (cexMatch && cexMark != null && cexMark > 0) return cexMark
+    if (binanceRefPrice != null && binanceRefPrice > 0) return binanceRefPrice
+    return markPrice
+  }
+  return markPrice
+}
+
 /** Binance-style symbol the Jupiter position routes are keyed by (e.g. GEODUSDT). */
 function jupiterSymbolFor(dashboardSymbol: string, match?: DexJupiterPosition | null): string {
   if (match?.binanceSymbol) return match.binanceSymbol
@@ -752,19 +787,11 @@ export default function DashboardPage() {
   const botLiveMarkBySymbol = useMemo(() => {
     const m = new Map<string, number>()
     for (const p of summary?.openPositions ?? []) {
+      if (!isJupiterBook(p.strategyBook)) continue
       const sym = p.symbol.toUpperCase()
-      const mark = liveMarks[sym] ?? p.markPrice
+      const mark = liveMarkLookup(liveMarks, sym) ?? p.markPrice
       if (mark == null || !Number.isFinite(mark)) continue
-      if (p.strategyBook?.includes('1inch')) {
-        m.set(`${sym}:1inch`, mark)
-      } else {
-        m.set(sym, mark)
-      }
-    }
-    for (const [sym, px] of Object.entries(liveMarks)) {
-      if (px != null && Number.isFinite(px) && !m.has(sym)) {
-        m.set(sym, px)
-      }
+      m.set(sym, mark)
     }
     return m
   }, [summary?.openPositions, liveMarks])
@@ -1228,13 +1255,30 @@ export default function DashboardPage() {
                   </tr>
                 ) : null}
                 {filteredOpenPositions.map((pos) => {
-                  const posMark = liveMarks[pos.symbol.toUpperCase()] ?? pos.markPrice
+                  const isAutoBinance = isAutoBinanceBook(pos.strategyBook)
+                  const isJupiter = isJupiterBook(pos.strategyBook)
+                  const cexMatch = isAutoBinance && cexLotMatchesSymbol(pos.symbol, cexOpenPos)
+                  const jup = isJupiter ? jupPositionFor(pos.symbol) : null
+                  const posMark = venueExitMark({
+                    strategyBook: pos.strategyBook,
+                    symbol: pos.symbol,
+                    markPrice: pos.markPrice,
+                    binanceRefPrice: pos.binanceRefPrice,
+                    liveMarks,
+                    jupSell: jup?.liveSellPrice,
+                    jupMid: jup?.liveMidPrice,
+                    cexMark: cexOpenPos?.markPrice,
+                    cexMatch,
+                  })
                   const posMarketValueUsd = posMark != null && pos.quantity > 0 ? pos.quantity * posMark : pos.marketValueUsd
                   const posUnrealizedPnlUsd = posMarketValueUsd - pos.costBasisUsd
-                  const posUnrealizedPnlPct = pos.costBasisUsd > 0 ? (posUnrealizedPnlUsd / pos.costBasisUsd) * 100 : pos.unrealizedPnlPct
+                  const posUnrealizedPnlPct =
+                    pos.avgEntryPrice != null && pos.avgEntryPrice > 0 && posMark != null
+                      ? ((posMark - pos.avgEntryPrice) / pos.avgEntryPrice) * 100
+                      : pos.costBasisUsd > 0
+                        ? (posUnrealizedPnlUsd / pos.costBasisUsd) * 100
+                        : pos.unrealizedPnlPct
                   const positive = posUnrealizedPnlUsd >= 0
-                  const isAutoBinance = isAutoBinanceBook(pos.strategyBook)
-                  const cexMatch = isAutoBinance && cexLotMatchesSymbol(pos.symbol, cexOpenPos)
                   const canSell =
                     isRealOpenPosition(pos) &&
                     (summary.equitySource === 'personal_wallet_live' ||
@@ -1243,8 +1287,6 @@ export default function DashboardPage() {
                       (pos.strategyBook?.includes('Jupiter') ?? false))
                   const sellKey = `${pos.symbol}-${pos.strategyBook ?? 'x'}`
                   const selling = sellingSymbol === sellKey
-                  const isJupiter = isJupiterBook(pos.strategyBook)
-                  const jup = isJupiter ? jupPositionFor(pos.symbol) : null
                   const hasExitControls = canSell && (isAutoBinance || isJupiter)
                   const skimBusy = skimBusyKey === sellKey
                   const editorOpen = exitEditKey === sellKey
@@ -1431,11 +1473,11 @@ export default function DashboardPage() {
                             >
                               Binance →
                             </Link>
-                          ) : (
-                            <Link href="/dex" className="text-xs text-blue-400 underline hover:text-blue-300">
-                              DEX →
+                          ) : isJupiter ? (
+                            <Link href="/dex-jupiter" className="text-xs text-violet-400 underline hover:text-violet-300">
+                              Solana →
                             </Link>
-                          )}
+                          ) : null}
                         </td>
                       </tr>
                       {belowMinOrder ? (
@@ -1579,12 +1621,9 @@ export default function DashboardPage() {
                         ? 'text-amber-300/90'
                         : 'text-sky-300'
                 const baseSym = t.pair.split('/')[0]?.toUpperCase() ?? ''
-                const isOneInchBook = t.strategy.includes('1inch')
                 const liveMark =
-                  t.status === 'OPEN'
-                    ? isOneInchBook
-                      ? botLiveMarkBySymbol.get(`${baseSym}:1inch`) ?? botLiveMarkBySymbol.get(baseSym)
-                      : botLiveMarkBySymbol.get(baseSym)
+                  t.status === 'OPEN' && t.strategy.toLowerCase().includes('jupiter')
+                    ? botLiveMarkBySymbol.get(baseSym)
                     : undefined
                 const movePct =
                   liveMark != null &&
@@ -1644,14 +1683,14 @@ export default function DashboardPage() {
           <CardTitle className="text-base font-medium text-white">Quick links</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" className="border-emerald-500/40 text-emerald-300" asChild>
-            <Link href="/dex-1inch">DEX 1inch · BSC</Link>
-          </Button>
           <Button variant="outline" size="sm" className="border-violet-500/40 text-violet-300" asChild>
             <Link href="/dex-jupiter">Solana</Link>
           </Button>
           <Button variant="outline" size="sm" asChild>
-            <Link href="/wallet">Wallet · all chains</Link>
+            <Link href="/trading">Binance</Link>
+          </Button>
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/wallet">Wallet</Link>
           </Button>
         </CardContent>
       </Card>

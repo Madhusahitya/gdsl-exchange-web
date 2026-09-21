@@ -143,11 +143,7 @@ export function WalletActivityFeed({ chainFilter }: { chainFilter?: 'all' | 'bsc
           <Link href="/dex-jupiter" className="text-violet-300 underline">
             Solana
           </Link>{' '}
-          and{' '}
-          <Link href="/dex-1inch" className="text-sky-300 underline">
-            DEX 1inch
-          </Link>{' '}
-          are logged here after execution. Use Convert / Transfer in the top bar for same-chain or cross-chain moves.
+          are logged here after execution.
         </p>
       </CardContent>
     </Card>

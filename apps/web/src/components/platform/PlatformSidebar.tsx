@@ -7,17 +7,11 @@ import { auth, invalidateAuthMeCache } from '@/lib/api'
 import { BrandMark } from '@/components/platform/BrandMark'
 
 const navItems = [
-  { name: 'Back to Home', href: '/', icon: 'home' as const },
   { name: 'Dashboard', href: '/dashboard', icon: 'grid' as const },
   { name: 'Overview', href: '/overview', icon: 'coins' as const },
   { name: 'Binance', href: '/trading', icon: 'terminal' as const },
-  // Hidden for now (routes still work if bookmarked) — frees space for Jupiter terminal.
-  // { name: 'DEX Trading', href: '/dex', icon: 'dex' as const },
-  // { name: 'DEX 1inch', href: '/dex-1inch', icon: 'swap' as const },
   { name: 'Solana', href: '/dex-jupiter', icon: 'swap' as const },
   { name: 'AI Agents', href: '/agents', icon: 'brain' as const },
-  // { name: 'DEX Swap', href: '/dex-swap', icon: 'swap' as const },
-  // { name: 'Token Trading', href: '/token-trading', icon: 'coins' as const },
   { name: 'Buy / Sell Fiat', href: '/onramp', icon: 'coins' as const },
   { name: 'Wallet', href: '/wallet', icon: 'wallet' as const },
   { name: 'Orders', href: '/orders', icon: 'orders' as const },
@@ -30,12 +24,6 @@ const navItems = [
 function Icon({ name }: { name: (typeof navItems)[number]['icon'] }) {
   const cls = 'w-5 h-5 flex-shrink-0'
   switch (name) {
-    case 'home':
-      return (
-        <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-        </svg>
-      )
     case 'grid':
       return (
         <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -177,7 +165,7 @@ export default function PlatformSidebar({
 
       <nav className="flex-1 space-y-0.5 overflow-y-auto p-3">
         {navItems.map((item) => {
-          const active = item.href === '/' ? pathname === '/' : pathname === item.href || pathname.startsWith(`${item.href}/`)
+          const active = pathname === item.href || pathname.startsWith(`${item.href}/`)
           return (
             <Link
               key={item.href}

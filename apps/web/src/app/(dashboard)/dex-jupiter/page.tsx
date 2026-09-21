@@ -2,7 +2,6 @@
 
 import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
-import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 import { useSolanaWalletView } from '@/hooks/useSolanaWalletView'
@@ -10,7 +9,6 @@ import { useBrowserJupiterSwap } from '@/hooks/useBrowserJupiterSwap'
 import { JupiterAutopilotPanel } from '@/components/dex/JupiterAutopilotPanel'
 import { JupiterSuperMachinePanel } from '@/components/dex/JupiterSuperMachinePanel'
 import {
-  EntryQualityBanner,
   JupiterProfitControls,
   type SlippagePreset,
 } from '@/components/dex/JupiterProfitControls'
@@ -749,115 +747,114 @@ function DexJupiterContent() {
     void execute({ side: 'SELL', amount: sellAmt }, { skipQuoteGate: true })
   }
 
+  const modeTabs = (
+    <div className="flex gap-1 rounded-lg border border-white/10 bg-[#0a0a0f] p-0.5">
+      {([
+        ['trade', 'Trade'],
+        ['router', 'Router'],
+        ['predict', 'Predict'],
+      ] as const).map(([mode, label]) => (
+        <button
+          key={mode}
+          type="button"
+          onClick={() => setPageMode(mode)}
+          className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+            pageMode === mode
+              ? mode === 'predict'
+                ? 'bg-amber-600 text-white'
+                : mode === 'router'
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-violet-600 text-white'
+              : 'text-zinc-400 hover:bg-white/5'
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+
   return (
-    <div className="flex h-[calc(100dvh-4.5rem)] min-h-[520px] flex-col gap-2 overflow-hidden">
+    <div className="flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col gap-1.5 overflow-hidden">
+      {pageMode === 'predict' ? (
+        <>
+          <div className="flex shrink-0 items-center">{modeTabs}</div>
+          <JupiterPredictionsPanel solAddress={solAddress} />
+        </>
+      ) : pageMode === 'router' ? (
+        <>
+          <div className="flex shrink-0 items-center">{modeTabs}</div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <ExecutionEnginePanel
+              binanceSymbol={selected ?? 'SOLUSDT'}
+              side={side}
+              amount={Number.parseFloat(amount) || 50}
+              spendMint={side === 'BUY' ? payWith.mint : undefined}
+            />
+          </div>
+        </>
+      ) : (
+    <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-hidden">
       <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <div className="flex gap-1 rounded-lg border border-white/10 bg-[#0a0a0f] p-0.5">
-          {([
-            ['trade', 'Trade'],
-            ['router', 'Router'],
-            ['predict', 'Predict'],
-          ] as const).map(([mode, label]) => (
+        {modeTabs}
+        <div className="min-w-[11rem] flex-1">
+          <JupiterTokenSearch
+            rows={rows}
+            selected={selected}
+            onSelect={(sym) => {
+              setSelected(sym)
+              try {
+                localStorage.setItem(CHART_SYMBOL_LS, sym)
+              } catch {
+                /* ignore */
+              }
+            }}
+            tradableCount={tradableCount}
+            discovering={meta?.discovering ?? false}
+          />
+        </div>
+        {selected ? (
+          <div className="min-w-0 flex-[1.3]">
+            <JupiterTokenHeader symbol={selected} row={selectedRow} marks={jupiterMarks} />
+          </div>
+        ) : null}
+        <div className="flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
+          {(
+            [
+              { id: 'auto', label: 'Super Machine' },
+              { id: 'manual', label: 'Manual' },
+            ] as const
+          ).map((m) => (
             <button
-              key={mode}
+              key={m.id}
               type="button"
-              onClick={() => setPageMode(mode)}
-              className={`rounded-md px-4 py-1.5 text-xs font-medium transition ${
-                pageMode === mode
-                  ? mode === 'predict'
-                    ? 'bg-amber-600 text-white'
-                    : mode === 'router'
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-violet-600 text-white'
-                  : 'text-zinc-400 hover:bg-white/5'
+              onClick={() => setTerminalMode(m.id)}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                terminalMode === m.id ? 'bg-violet-600 text-white' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
-              {label}
+              {m.label}
             </button>
           ))}
         </div>
       </div>
 
-      {pageMode === 'predict' ? (
-        <JupiterPredictionsPanel solAddress={solAddress} />
-      ) : pageMode === 'router' ? (
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <ExecutionEnginePanel
-            binanceSymbol={selected ?? 'SOLUSDT'}
-            side={side}
-            amount={Number.parseFloat(amount) || 50}
-            spendMint={side === 'BUY' ? payWith.mint : undefined}
-          />
-        </div>
-      ) : (
-    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden px-1 sm:px-2">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-2">
-        <div>
-          <h1 className="text-xl font-bold text-white">Solana</h1>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
-            {(
-              [
-                { id: 'auto', label: 'Super Machine' },
-                { id: 'manual', label: 'Manual' },
-              ] as const
-            ).map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => setTerminalMode(m.id)}
-                className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
-                  terminalMode === m.id ? 'bg-violet-600 text-white' : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-stretch">
-        <JupiterTokenSearch
-          rows={rows}
-          selected={selected}
-          onSelect={(sym) => {
-            setSelected(sym)
-            try {
-              localStorage.setItem(CHART_SYMBOL_LS, sym)
-            } catch {
-              /* ignore */
-            }
-          }}
-          tradableCount={tradableCount}
-          discovering={meta?.discovering ?? false}
-        />
-        {selected ? (
-          <div className="min-w-0 flex-[1.2]">
-            <JupiterTokenHeader symbol={selected} row={selectedRow} marks={jupiterMarks} />
-          </div>
-        ) : null}
-      </div>
-
       {terminalMode === 'auto' ? <JupiterCouncilStrip watchSymbol={selected} /> : null}
 
-      <div className="flex min-h-0 flex-1 flex-col gap-2 lg:flex-row">
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 xl:grid-cols-[minmax(200px,240px)_minmax(0,1fr)]">
-          <div className="hidden min-h-0 xl:block">
+      <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(16rem,1fr)_12.5rem_auto] gap-1.5 lg:grid-cols-[minmax(0,1fr)_20rem] lg:grid-rows-[minmax(0,1fr)_12.5rem] xl:grid-cols-[200px_minmax(0,1fr)_20rem]">
+          <div className="hidden min-h-0 xl:order-1 xl:block">
             <JupiterOrderBookPanel
               symbol={selected ?? 'SOLUSDT'}
               label={selected ? pairLabel(selected) : 'SOL/USDT'}
-              depth={14}
-              className="h-full min-h-[420px]"
+              depth={16}
+              className="h-full"
               pollMs={3_500}
               fallbackMid={jupiterMid}
               fallbackBid={orderBookBid}
               fallbackAsk={orderBookAsk}
             />
           </div>
-          <div className="min-h-[420px] min-w-0 flex-1 overflow-hidden xl:min-h-[520px]">
+          <div className="h-full min-h-0 min-w-0 overflow-hidden lg:order-1 xl:order-2">
           {selected ? (
             <JupiterTradingChart
               symbol={selected}
@@ -889,24 +886,9 @@ function DexJupiterContent() {
             </div>
           )}
           </div>
-        </div>
 
-        <div className="xl:hidden">
-          <JupiterOrderBookPanel
-            symbol={selected ?? 'SOLUSDT'}
-            label={selected ? pairLabel(selected) : 'SOL/USDT'}
-            depth={12}
-            className="max-h-[320px]"
-            pollMs={3_500}
-            fallbackMid={jupiterMid}
-            fallbackBid={orderBookBid}
-            fallbackAsk={orderBookAsk}
-          />
-        </div>
-
-        <div className="max-h-[38vh] shrink-0 space-y-2 overflow-y-auto">
-        <div className="rounded-lg border border-white/10 bg-[#0a0a0f]">
-          <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
+      <div className="flex h-[12.5rem] min-h-0 flex-col overflow-hidden rounded-lg border border-white/10 bg-[#0a0a0f] lg:order-3 lg:col-span-2 xl:order-4 xl:col-span-3">
+          <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-3 py-2">
             <div className="flex items-center gap-2">
               <h3 className="text-xs font-semibold text-white">Open positions</h3>
               {positionsLoading ? <span className="text-[10px] text-zinc-600">refreshing…</span> : null}
@@ -931,7 +913,7 @@ function DexJupiterContent() {
           {positions.length === 0 ? (
             <p className="px-3 py-3 text-[11px] text-zinc-600">No open positions.</p>
           ) : (
-            <div className="max-h-[160px] overflow-auto">
+            <div className="min-h-0 flex-1 overflow-auto">
               <table className="w-full text-left text-[11px]">
                 <thead className="sticky top-0 bg-[#0a0a0f] text-zinc-500">
                   <tr className="border-b border-white/5">
@@ -1175,10 +1157,8 @@ function DexJupiterContent() {
             </div>
           )}
         </div>
-        </div>
-      </main>
 
-      <aside className="flex max-h-full min-h-0 w-full flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0a0a0f] lg:w-80 xl:w-[22rem]">
+      <aside className="flex min-h-0 w-full flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0a0a0f] lg:order-2 xl:order-3">
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {terminalMode === 'auto' ? (
         <div className="min-h-0 flex-1 overflow-y-auto border-b border-white/10 px-3 pb-2 pt-3">
@@ -1419,7 +1399,6 @@ function DexJupiterContent() {
         )}
 
         {quoteBusy ? <p className="text-xs text-zinc-500">Fetching best route…</p> : null}
-        <EntryQualityBanner quote={quote} />
         {quote ? (
           <div className="space-y-2 rounded-lg border border-white/10 bg-black/30 p-2.5 text-xs">
             {/* Clear ticket — what you pay / get / which route executes */}
@@ -1621,13 +1600,22 @@ function DexJupiterContent() {
           slippagePreset={slippagePreset}
           onSlippagePresetChange={setSlippagePreset}
         />
-        <Link href="/dex" className="text-[11px] text-zinc-500 hover:text-white">
-          ← BSC DEX
-        </Link>
         </div>
         )}
         </div>
       </aside>
+      </div>
+      <div className="xl:hidden">
+        <JupiterOrderBookPanel
+          symbol={selected ?? 'SOLUSDT'}
+          label={selected ? pairLabel(selected) : 'SOL/USDT'}
+          depth={12}
+          className="max-h-[240px]"
+          pollMs={3_500}
+          fallbackMid={jupiterMid}
+          fallbackBid={orderBookBid}
+          fallbackAsk={orderBookAsk}
+        />
       </div>
     </div>
       )}

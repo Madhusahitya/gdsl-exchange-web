@@ -25,6 +25,8 @@ type Props = {
   personalAddr: string | null
   onPersonalWallet: () => void
   onSolanaDeposit: () => void
+  /** When true, only browser wallets — personal / Binance are chosen earlier. */
+  browserOnly?: boolean
 }
 
 const short = (a?: string | null) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '')
@@ -45,6 +47,7 @@ export function ConnectWalletModal({
   personalAddr,
   onPersonalWallet,
   onSolanaDeposit,
+  browserOnly = false,
 }: Props) {
   const { isConnected, address } = useAccount()
   const { connectors, connect, isPending } = useConnect()
@@ -75,10 +78,14 @@ export function ConnectWalletModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="border-white/10 bg-[#111113] p-0 text-white sm:max-w-md overflow-hidden">
         <DialogHeader className="border-b border-white/10 px-5 py-4 text-center sm:text-center">
-          <DialogTitle className="text-lg font-semibold tracking-tight">Connect a wallet</DialogTitle>
+          <DialogTitle className="text-lg font-semibold tracking-tight">
+            {browserOnly ? 'Browser wallet' : 'Connect a wallet'}
+          </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-2 px-3 py-3">
+          {!browserOnly ? (
+            <>
           <button
             type="button"
             onClick={() => {
@@ -129,6 +136,8 @@ export function ConnectWalletModal({
             <span className="text-[10px] uppercase tracking-wider text-zinc-600">or connect</span>
             <span className="h-px flex-1 bg-white/10" />
           </div>
+            </>
+          ) : null}
 
           {solanaWallets.map((w) => {
             const isCurrent = solana.connected && solana.wallet?.adapter.name === w.adapter.name

@@ -107,7 +107,7 @@ export default function DashboardLayoutClient({ children }: { children: React.Re
         <main
           className={
             isDexJupiter
-              ? 'w-full px-2 pb-2 pt-1 sm:px-3'
+              ? 'w-full px-2 pb-1.5 pt-1 sm:px-2.5'
               : 'mx-auto w-full max-w-6xl px-4 pb-10 pt-2 sm:px-5 md:px-6 lg:pl-6'
           }
         >
