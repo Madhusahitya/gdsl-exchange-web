@@ -537,7 +537,11 @@ export default function DashboardPage() {
           setPositionMsg(`Skimmed ${res.pair} profit → USDT · +$${res.skimmedUsdTotal.toFixed(2)} banked total`)
         } else {
           const res = await dexJupiter.skimPosition(jupiterSymbolFor(symbol, jupPositionFor(symbol)))
-          const banked = res.trade.pnl != null ? ` · +$${res.trade.pnl.toFixed(2)} banked total` : ''
+          const skimPnl = res.trade.pnl
+          const banked =
+            skimPnl != null && Number.isFinite(skimPnl)
+              ? ` · ${skimPnl >= 0 ? '+' : '−'}$${Math.abs(skimPnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: skimPnl >= 1 ? 2 : 5 })} banked`
+              : ''
           setPositionMsg(`Skimmed ${symbol} profit → USDC${banked}`)
         }
         refreshPositionSources()
