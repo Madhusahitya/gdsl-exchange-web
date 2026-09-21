@@ -39,10 +39,19 @@ export function useSocket(options?: UseSocketOptions) {
 
     const onTradeExecuted = (payload: TradePayload) => {
       const { trade } = payload
-      const isBuy = trade.signal === 'BUY'
+      const extra = payload as TradePayload & { reason?: string; trade?: TradePayload['trade'] & { side?: string } }
+      const action =
+        extra.reason === 'profit_skim'
+          ? 'SKIM'
+          : trade.signal ?? extra.trade?.side ?? extra.reason ?? ''
+      if (!trade?.pair) return
+      const isBuy = action === 'BUY'
       const price = trade.exitPrice ?? trade.entryPrice ?? trade.price
-      const priceStr = price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      toast(`Trade executed: ${trade.pair} ${trade.signal} at $${priceStr}`, {
+      const priceStr =
+        price != null && Number.isFinite(price)
+          ? price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 8 })
+          : '—'
+      toast(`Trade executed: ${trade.pair} ${action} at $${priceStr}`, {
         style: {
           background: isBuy ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
           border: isBuy ? '1px solid rgba(34, 197, 94, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)',
