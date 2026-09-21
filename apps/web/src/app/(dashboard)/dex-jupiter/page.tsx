@@ -708,17 +708,20 @@ function DexJupiterContent() {
   }, [])
 
   const fallbackRefPrice = selectedRow?.lastPrice && selectedRow.lastPrice > 0 ? selectedRow.lastPrice : null
-  const chartBuyPrice =
-    quote?.jupiterBuyPrice ??
-    quote?.executablePrice ??
-    jupiterMarks?.ask ??
-    (fallbackRefPrice != null ? fallbackRefPrice * 1.0005 : null)
-  const chartSellPrice =
+  const jupiterMid = jupiterMarks?.mid ?? fallbackRefPrice ?? null
+  const orderBookBid =
     quote?.jupiterSellPrice ??
     openOnSelected?.liveSellPrice ??
     jupiterMarks?.bid ??
     (fallbackRefPrice != null ? fallbackRefPrice * 0.9995 : null)
-  const jupiterMid = jupiterMarks?.mid ?? fallbackRefPrice ?? null
+  const orderBookAsk =
+    quote?.jupiterBuyPrice ??
+    quote?.executablePrice ??
+    jupiterMarks?.ask ??
+    (fallbackRefPrice != null ? fallbackRefPrice * 1.0005 : null)
+  // Both Market Buy and Market Sell buttons display the current live market price
+  const chartBuyPrice = jupiterMid ?? orderBookAsk ?? fallbackRefPrice
+  const chartSellPrice = jupiterMid ?? orderBookBid ?? fallbackRefPrice
 
   // When you open/select a bag, start in Sell mode so the big chart price = Live price (bid).
   useEffect(() => {
@@ -850,8 +853,8 @@ function DexJupiterContent() {
               className="h-full min-h-[420px]"
               pollMs={3_500}
               fallbackMid={jupiterMid}
-              fallbackBid={chartSellPrice}
-              fallbackAsk={chartBuyPrice}
+              fallbackBid={orderBookBid}
+              fallbackAsk={orderBookAsk}
             />
           </div>
           <div className="min-h-[420px] min-w-0 flex-1 overflow-hidden xl:min-h-[520px]">
@@ -896,8 +899,8 @@ function DexJupiterContent() {
             className="max-h-[320px]"
             pollMs={3_500}
             fallbackMid={jupiterMid}
-            fallbackBid={chartSellPrice}
-            fallbackAsk={chartBuyPrice}
+            fallbackBid={orderBookBid}
+            fallbackAsk={orderBookAsk}
           />
         </div>
 

@@ -324,6 +324,8 @@ export function JupiterTradingChart({
       ? referencePrice
       : tradeMark ?? stats?.last.close ?? livePrice ?? null
   const markMode = chartTrade?.markMode ?? 'ask'
+  const displayBuyPrice = lastClose ?? chartTrade?.buyPrice ?? livePrice ?? null
+  const displaySellPrice = lastClose ?? chartTrade?.sellPrice ?? livePrice ?? null
 
   const guidanceStyles = {
     'buy-ok': 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100',
@@ -363,7 +365,9 @@ export function JupiterTradingChart({
               >
                 ${fmtPrice(lastClose)}
               </span>
-              {chartTrade?.buyPrice != null && chartTrade?.sellPrice != null ? (
+              {chartTrade?.buyPrice != null &&
+              chartTrade?.sellPrice != null &&
+              chartTrade.buyPrice !== chartTrade.sellPrice ? (
                 <span className="font-mono text-[11px] text-zinc-400">
                   <span className={markMode === 'ask' ? 'font-semibold text-emerald-300' : 'text-emerald-400/80'}>
                     Ask ${fmtPrice(chartTrade.buyPrice)}
@@ -454,9 +458,9 @@ export function JupiterTradingChart({
               onClick={chartTrade.onMarketBuy}
               className="min-w-[5.5rem] flex-1 rounded-md bg-emerald-600 px-2 py-1.5 text-left transition hover:bg-emerald-500 disabled:opacity-50"
             >
-              <div className="text-[9px] font-semibold uppercase tracking-wide text-emerald-100">Market Buy · Ask</div>
+              <div className="text-[9px] font-semibold uppercase tracking-wide text-emerald-100">Market Buy</div>
               <div className="font-mono text-[11px] font-bold text-white">
-                {chartTrade.buyPrice != null ? fmtPrice(chartTrade.buyPrice) : '—'}
+                {displayBuyPrice != null ? fmtPrice(displayBuyPrice) : '—'}
               </div>
             </button>
             <div className="flex min-w-[7rem] flex-[1.2] flex-col justify-center rounded-md border border-white/10 bg-black/50 px-2 py-1">
@@ -477,9 +481,9 @@ export function JupiterTradingChart({
               onClick={chartTrade.onMarketSell}
               className="min-w-[5.5rem] flex-1 rounded-md bg-rose-600 px-2 py-1.5 text-left transition hover:bg-rose-500 disabled:opacity-50"
             >
-              <div className="text-[9px] font-semibold uppercase tracking-wide text-rose-100">Market Sell · Bid</div>
+              <div className="text-[9px] font-semibold uppercase tracking-wide text-rose-100">Market Sell</div>
               <div className="font-mono text-[11px] font-bold text-white">
-                {chartTrade.sellPrice != null ? fmtPrice(chartTrade.sellPrice) : '—'}
+                {displaySellPrice != null ? fmtPrice(displaySellPrice) : '—'}
               </div>
             </button>
           </div>
