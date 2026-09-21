@@ -1,6 +1,7 @@
 'use client'
 
 import type { useCexMarketTrade } from '@/hooks/useCexMarketTrade'
+import { LiveNumber } from '@/components/ui/LiveNumber'
 
 type Trade = ReturnType<typeof useCexMarketTrade>
 
@@ -81,7 +82,9 @@ export function CexMarketTradePanel({ trade, compact = false }: Props) {
           className="rounded-lg bg-emerald-600 px-3 py-3 text-left transition hover:bg-emerald-500 disabled:opacity-40"
         >
           <p className="text-[9px] font-semibold uppercase text-emerald-100">Market Buy</p>
-          <p className="font-mono text-base font-bold text-white">{fmtPx(buyPrice)}</p>
+          <p className="font-mono text-base font-bold text-white">
+            <LiveNumber value={buyPrice}>{fmtPx(buyPrice)}</LiveNumber>
+          </p>
         </button>
         <button
           type="button"
@@ -90,7 +93,9 @@ export function CexMarketTradePanel({ trade, compact = false }: Props) {
           className="rounded-lg bg-rose-600 px-3 py-3 text-left transition hover:bg-rose-500 disabled:opacity-40"
         >
           <p className="text-[9px] font-semibold uppercase text-rose-100">Market Sell</p>
-          <p className="font-mono text-base font-bold text-white">{fmtPx(sellPrice)}</p>
+          <p className="font-mono text-base font-bold text-white">
+            <LiveNumber value={sellPrice}>{fmtPx(sellPrice)}</LiveNumber>
+          </p>
         </button>
       </div>
 

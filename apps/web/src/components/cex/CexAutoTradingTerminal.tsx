@@ -17,6 +17,7 @@ import { CexMarketTradePanel } from '@/components/cex/CexMarketTradePanel'
 import { CexChartMarketBar } from '@/components/cex/CexChartMarketBar'
 import { CexBinanceAccountPanel } from '@/components/cex/CexBinanceAccountPanel'
 import { useCexMarketTrade } from '@/hooks/useCexMarketTrade'
+import { useSocket } from '@/hooks/useSocket'
 import { LivePulse, LiveNumber } from '@/components/ui/LiveNumber'
 import { OrderBookPanel } from '@/components/market/OrderBookPanel'
 const CORE_PAIRS = [
@@ -73,14 +74,35 @@ export function CexAutoTradingTerminal() {
   } | null>(null)
   const [mid, setMid] = useState<number | null>(null)
   const [spreadBps, setSpreadBps] = useState<number | null>(null)
+  const [liveBid, setLiveBid] = useState<number | null>(null)
+  const [liveAsk, setLiveAsk] = useState<number | null>(null)
   const [board, setBoard] = useState<BoardRow[]>([])
   const [boardTotal, setBoardTotal] = useState(0)
   const [boardFilter, setBoardFilter] = useState('')
 
-  const trade = useCexMarketTrade(symbol, () => {
-    void refreshSm()
-    window.dispatchEvent(new Event('dashboard:refresh'))
-  })
+  const onPricesChange = useCallback(
+    (prices: {
+      bestBid: number | null
+      bestAsk: number | null
+      mid: number | null
+      spreadBps: number | null
+    }) => {
+      if (prices.bestBid != null) setLiveBid(prices.bestBid)
+      if (prices.bestAsk != null) setLiveAsk(prices.bestAsk)
+      if (prices.mid != null) setMid(prices.mid)
+      if (prices.spreadBps != null) setSpreadBps(prices.spreadBps)
+    },
+    [],
+  )
+
+  const trade = useCexMarketTrade(
+    symbol,
+    () => {
+      void refreshSm()
+      window.dispatchEvent(new Event('dashboard:refresh'))
+    },
+    { buyPrice: liveAsk, sellPrice: liveBid },
+  )
 
   const activeSymbol = trade.desk?.tradeSymbol ?? symbol
   const tvSymbol = `BINANCE:${activeSymbol}`
@@ -126,16 +148,6 @@ export function CexAutoTradingTerminal() {
     }
   }, [])
 
-  const refreshMid = useCallback(async () => {
-    try {
-      const d = await engine.orderBook(activeSymbol, 1)
-      setMid(d.mid)
-      setSpreadBps(d.spreadBps)
-    } catch {
-      /* ignore */
-    }
-  }, [activeSymbol])
-
   const refreshBoard = useCallback(async () => {
     try {
       const b = await engine.marketBoard(500)
@@ -154,12 +166,19 @@ export function CexAutoTradingTerminal() {
   useEffect(() => {
     void refreshSm()
     void refreshBoard()
-    const id = window.setInterval(() => {
-      void refreshSm()
-      void refreshBoard()
-    }, 20_000)
-    return () => window.clearInterval(id)
   }, [refreshSm, refreshBoard])
+
+  useSocket({
+    onTradeExecuted: () => {
+      void refreshSm()
+    },
+  })
+
+  useEffect(() => {
+    const onRefresh = () => void refreshSm()
+    window.addEventListener('dashboard:refresh', onRefresh)
+    return () => window.removeEventListener('dashboard:refresh', onRefresh)
+  }, [refreshSm])
 
   useEffect(() => {
     engine
@@ -189,15 +208,11 @@ export function CexAutoTradingTerminal() {
     }
   }
 
-  useEffect(() => {
-    void refreshMid()
-    const id = window.setInterval(() => void refreshMid(), 1_500)
-    return () => window.clearInterval(id)
-  }, [refreshMid])
-
   const pickSymbol = async (sym: string) => {
     const next = sym.replace('/', '').toUpperCase()
     setSymbol(next)
+    setLiveBid(null)
+    setLiveAsk(null)
     // Browsing pairs on the manual desk must not retarget the Super Machine.
     if (mode === 'manual') return
     try {
@@ -410,7 +425,15 @@ export function CexAutoTradingTerminal() {
 
       {/* Main grid: order book | chart | recommendations */}
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 xl:grid-cols-[260px_minmax(0,1fr)_280px]">
-        <OrderBookPanel symbol={activeSymbol} className="max-h-[640px]" />
+        <OrderBookPanel
+          symbol={activeSymbol}
+          className="max-h-[640px]"
+          onMidChange={(nextMid, nextSpread) => {
+            if (nextMid != null) setMid(nextMid)
+            if (nextSpread != null) setSpreadBps(nextSpread)
+          }}
+          onPricesChange={onPricesChange}
+        />
 
         {/* Chart + instant market buy/sell */}
         <div className="relative flex min-h-[420px] flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0a0a0f]">
@@ -426,8 +449,8 @@ export function CexAutoTradingTerminal() {
               onAmountChange={trade.setAmount}
               quoteAsset={trade.quoteAsset}
               baseAsset={trade.baseAsset}
-              buyPrice={trade.buyPrice}
-              sellPrice={trade.sellPrice}
+              buyPrice={liveAsk ?? trade.buyPrice ?? mid}
+              sellPrice={liveBid ?? trade.sellPrice ?? mid}
               busy={trade.busy}
               onMarketBuy={() => void trade.marketBuy()}
               onMarketSell={() => void trade.marketSell()}

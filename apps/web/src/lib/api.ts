@@ -2302,7 +2302,7 @@ export const dexJupiter = {
       disclaimer: string
     }>,
   positions: async () =>
-    (await api.get('/api/dex-jupiter/positions', { timeout: 30_000 })).data as Promise<{
+    (await api.get('/api/dex-jupiter/positions', { timeout: 8_000 })).data as Promise<{
       positions: DexJupiterPosition[]
       totalNetPnlUsd: number
       totalValueUsd: number

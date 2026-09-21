@@ -3,14 +3,13 @@
 /**
  * Solana × Jupiter markets overview — Binance Markets-style Hot / Gainers / Volume cards
  * + full coin table. Prices flash on update like a live terminal.
+ * Real-time updates via Socket.IO push (no polling).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { toast } from 'sonner'
-import { dexJupiter, type MarketBoardRow } from '@/lib/api'
+import { type MarketBoardRow } from '@/lib/api'
 import { cn } from '@/lib/utils'
-
-const POLL_MS = 3_000
+import { useOverviewSocket } from '@/hooks/useOverviewSocket'
 
 function fmtPrice(p: number): string {
   if (!Number.isFinite(p)) return '—'
@@ -109,38 +108,10 @@ function HighlightCard({
 }
 
 export default function OverviewPage() {
-  const [rows, setRows] = useState<MarketBoardRow[]>([])
-  const [highlights, setHighlights] = useState<{
-    hot: MarketBoardRow[]
-    topGainers: MarketBoardRow[]
-    topLosers: MarketBoardRow[]
-  }>({ hot: [], topGainers: [], topLosers: [] })
-  const [totalPairs, setTotalPairs] = useState(0)
+  const { rows, highlights, totalPairs, updatedAt, loading, connected, refresh } =
+    useOverviewSocket()
   const [search, setSearch] = useState('')
   const [tag, setTag] = useState<'all' | 'sol' | 'meme' | 'majors'>('all')
-  const [loading, setLoading] = useState(true)
-  const [updatedAt, setUpdatedAt] = useState<string | null>(null)
-
-  const load = useCallback(async () => {
-    try {
-      const ov = await dexJupiter.overview(1500)
-      setRows(ov.rows)
-      setHighlights(ov.highlights)
-      setTotalPairs(ov.totalPairs)
-      setUpdatedAt(ov.updatedAt)
-    } catch (e: unknown) {
-      const ax = e as { response?: { data?: { error?: string } } }
-      toast.error(ax.response?.data?.error ?? 'Could not load Solana overview')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void load()
-    const id = window.setInterval(() => void load(), POLL_MS)
-    return () => window.clearInterval(id)
-  }, [load])
 
   const topVolume = useMemo(
     () => [...rows].sort((a, b) => b.quoteVolume - a.quoteVolume).slice(0, 5),
@@ -170,8 +141,9 @@ export default function OverviewPage() {
         <p className="text-xs text-zinc-500">
           {totalPairs > 0 ? `${totalPairs} Solana pairs` : '—'}
           {updatedAt ? ` · ${new Date(updatedAt).toLocaleTimeString()}` : ''}
-          <span className="ml-2 inline-flex items-center gap-1 text-emerald-400/80">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> live
+          <span className={`ml-2 inline-flex items-center gap-1 ${connected ? 'text-emerald-400/80' : 'text-amber-400/80'}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${connected ? 'animate-pulse bg-emerald-400' : 'bg-amber-400'}`} />
+            {connected ? 'live' : 'reconnecting…'}
           </span>
         </p>
       </div>
@@ -213,7 +185,7 @@ export default function OverviewPage() {
           />
           <button
             type="button"
-            onClick={() => void load()}
+            onClick={() => void refresh()}
             className="rounded-lg border border-white/10 px-3 py-2 text-xs text-zinc-300 hover:bg-white/5"
           >
             Refresh
@@ -255,9 +227,8 @@ export default function OverviewPage() {
                     <FlashPrice value={r.lastPrice} className="text-zinc-100" />
                   </td>
                   <td
-                    className={`px-3 py-2 text-right font-mono ${
-                      r.priceChangePercent >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                    }`}
+                    className={`px-3 py-2 text-right font-mono ${r.priceChangePercent >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                      }`}
                   >
                     {fmtPct(r.priceChangePercent)}
                   </td>

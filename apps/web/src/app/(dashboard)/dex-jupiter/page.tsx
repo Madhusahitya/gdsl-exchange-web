@@ -21,6 +21,8 @@ import { JupiterTokenHeader } from '@/components/dex/JupiterTokenHeader'
 import { JupiterTradeModeTabs, type JupiterTradeMode } from '@/components/dex/JupiterTradeModeTabs'
 import { JupiterCouncilStrip } from '@/components/dex/JupiterCouncilStrip'
 import { useJupiterMarks } from '@/hooks/useJupiterMarks'
+import { useOverviewSocket } from '@/hooks/useOverviewSocket'
+import { connectSocket } from '@/lib/socket'
 import { usePageVisible } from '@/hooks/usePageVisible'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -38,6 +40,7 @@ import {
   type ExecutionCompareResult,
   type MarketBoardRow,
   type JupiterLimitOrder,
+  type LiveCandle,
 } from '@/lib/api'
 
 const JupiterPredictionsPanel = dynamic(
@@ -56,9 +59,8 @@ const ExecutionEnginePanel = dynamic(
   { ssr: false, loading: () => <div className="flex flex-1 items-center justify-center text-sm text-zinc-500">Loading Router…</div> },
 )
 
-const BOARD_POLL_MS = 2_500
 const QUOTE_DEBOUNCE_MS = 350
-const POSITIONS_POLL_MS = 2_000
+const POSITIONS_POLL_MS = 20_000
 
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const SOL_MINT = 'So11111111111111111111111111111111111111112'
@@ -96,11 +98,7 @@ function DexJupiterContent() {
   const searchParams = useSearchParams()
   const symbolParam = searchParams.get('symbol')?.toUpperCase() ?? null
 
-  const [rows, setRows] = useState<MarketBoardRow[]>([])
-  const [boardMeta, setBoardMeta] = useState<{ tradableCount: number; discovering: boolean }>({
-    tradableCount: 0,
-    discovering: true,
-  })
+  const { rows, totalPairs } = useOverviewSocket()
   const [tradeMode, setTradeMode] = useState<JupiterTradeMode>('market')
   const [limitPrice, setLimitPrice] = useState('')
   const [recurringUsd, setRecurringUsd] = useState('25')
@@ -162,6 +160,36 @@ function DexJupiterContent() {
 
   const fetchJupiterCandles = useCallback(
     async (symbol: string, interval: '1m' | '5m' | '15m' | '1h' | '4h' | '1d', limit: number) => {
+      // 1. Direct public CDN fetch for Binance-paired tokens (<80ms)
+      try {
+        const binanceSym = symbol.toUpperCase()
+        const r = await fetch(
+          `https://data-api.binance.vision/api/v3/klines?symbol=${encodeURIComponent(binanceSym)}&interval=${interval}&limit=${limit}`,
+          { signal: AbortSignal.timeout(3500) },
+        )
+        if (r.ok) {
+          const raw = (await r.json()) as Array<Array<string | number>>
+          if (Array.isArray(raw) && raw.length > 0) {
+            const candles: LiveCandle[] = raw.map((row) => ({
+              openTime: Number(row[0]),
+              open: parseFloat(String(row[1])),
+              high: parseFloat(String(row[2])),
+              low: parseFloat(String(row[3])),
+              close: parseFloat(String(row[4])),
+              volume: parseFloat(String(row[5])),
+              closeTime: Number(row[6]),
+            }))
+            return {
+              candles,
+              footerExtra: 'Solana live',
+            }
+          }
+        }
+      } catch {
+        /* fallback to backend API */
+      }
+
+      // 2. Backend fallback
       const result = await dexJupiter.candles(symbol, interval, limit)
       const block =
         result.jupiterBlockId != null ? `Solana block ${result.jupiterBlockId}` : 'Solana live'
@@ -181,33 +209,10 @@ function DexJupiterContent() {
     return res.price
   }, [])
 
-  const loadBoard = useCallback(async () => {
-    try {
-      const res = await dexJupiter.marketBoard(1500)
-      setRows(res.rows)
-      setBoardMeta({
-        tradableCount: res.tradableCount ?? res.rows.length,
-        discovering: res.discovering ?? false,
-      })
-    } catch {
-      /* background poll */
-    }
-  }, [])
-
   const pageVisible = usePageVisible()
 
   useEffect(() => {
-    if (!pageVisible || pageMode !== 'trade') return
-    void loadBoard()
-    const id = window.setInterval(() => void loadBoard(), BOARD_POLL_MS)
-    return () => window.clearInterval(id)
-  }, [loadBoard, pageVisible, pageMode])
-
-  useEffect(() => {
     void dexJupiter.meta().then(setMeta).catch(() => setMeta(null))
-    const metaPoll = window.setInterval(() => {
-      void dexJupiter.meta().then(setMeta).catch(() => null)
-    }, 20_000)
     void dexJupiter.walletStatus().then(async (s) => {
       if (s.wallet?.address) {
         setSolAddress(s.wallet.address)
@@ -222,10 +227,9 @@ function DexJupiterContent() {
         }
       }
     })
-    return () => window.clearInterval(metaPoll)
   }, [])
 
-  const tradableCount = boardMeta.tradableCount || meta?.tradableCount || rows.length
+  const tradableCount = totalPairs || meta?.tradableCount || rows.length
 
   const filtered = useMemo(() => rows, [rows])
 
@@ -299,7 +303,7 @@ function DexJupiterContent() {
     } catch {
       /* keep previous — RPC blips must not clear pay-with list */
     }
-  }, [walletView])
+  }, [walletView.source])
 
   useEffect(() => {
     void loadPayTokens()
@@ -440,8 +444,6 @@ function DexJupiterContent() {
   useEffect(() => {
     if (!pageVisible || pageMode !== 'trade') return
     void loadPositions()
-    const id = window.setInterval(() => void loadPositions(), POSITIONS_POLL_MS)
-    return () => window.clearInterval(id)
   }, [loadPositions, pageVisible, pageMode])
 
   const loadLimitOrders = useCallback(async () => {
@@ -456,9 +458,26 @@ function DexJupiterContent() {
   useEffect(() => {
     if (!pageVisible || pageMode !== 'trade') return
     void loadLimitOrders()
-    const id = window.setInterval(() => void loadLimitOrders(), 10_000)
-    return () => window.clearInterval(id)
   }, [loadLimitOrders, pageVisible, pageMode])
+
+  // Real-time position and limit order updates driven by server events
+  useEffect(() => {
+    const socket = connectSocket()
+    const onTrade = () => {
+      void loadPositions()
+      void loadLimitOrders()
+    }
+    const onRefresh = () => {
+      void loadPositions()
+    }
+
+    socket.on('trade:executed', onTrade)
+    socket.on('positions:refresh', onRefresh)
+    return () => {
+      socket.off('trade:executed', onTrade)
+      socket.off('positions:refresh', onRefresh)
+    }
+  }, [loadPositions, loadLimitOrders])
 
   const sellPosition = useCallback(
     async (p: DexJupiterPosition, fraction: 'all' | 'half') => {
@@ -575,11 +594,9 @@ function DexJupiterContent() {
       }
     }
     const t = window.setTimeout(() => void run(), 400)
-    const id = window.setInterval(() => void run(), 12_000)
     return () => {
       cancelled = true
       window.clearTimeout(t)
-      window.clearInterval(id)
     }
   }, [selected, side, amount, payWith.mint, pageMode])
 
@@ -679,7 +696,7 @@ function DexJupiterContent() {
     () => positions.find((p) => p.binanceSymbol === selected) ?? null,
     [positions, selected],
   )
-  const jupiterMarks = useJupiterMarks(selected, 4_000)
+  const jupiterMarks = useJupiterMarks(selected, 10_000)
 
   const loadLimitOrdersRef = useRef(loadLimitOrders)
   loadLimitOrdersRef.current = loadLimitOrders
@@ -690,10 +707,21 @@ function DexJupiterContent() {
     return () => window.removeEventListener('dashboard:refresh', onFilled)
   }, [])
 
-  const chartBuyPrice = quote?.jupiterBuyPrice ?? quote?.executablePrice ?? jupiterMarks?.ask ?? null
-  const chartSellPrice =
-    quote?.jupiterSellPrice ?? openOnSelected?.liveSellPrice ?? jupiterMarks?.bid ?? null
-  const jupiterMid = jupiterMarks?.mid ?? null
+  const fallbackRefPrice = selectedRow?.lastPrice && selectedRow.lastPrice > 0 ? selectedRow.lastPrice : null
+  const jupiterMid = jupiterMarks?.mid ?? fallbackRefPrice ?? null
+  const orderBookBid =
+    quote?.jupiterSellPrice ??
+    openOnSelected?.liveSellPrice ??
+    jupiterMarks?.bid ??
+    (fallbackRefPrice != null ? fallbackRefPrice * 0.9995 : null)
+  const orderBookAsk =
+    quote?.jupiterBuyPrice ??
+    quote?.executablePrice ??
+    jupiterMarks?.ask ??
+    (fallbackRefPrice != null ? fallbackRefPrice * 1.0005 : null)
+  // Both Market Buy and Market Sell buttons display the current live market price
+  const chartBuyPrice = jupiterMid ?? orderBookAsk ?? fallbackRefPrice
+  const chartSellPrice = jupiterMid ?? orderBookBid ?? fallbackRefPrice
 
   // When you open/select a bag, start in Sell mode so the big chart price = Live price (bid).
   useEffect(() => {
@@ -803,11 +831,11 @@ function DexJupiterContent() {
             }
           }}
           tradableCount={tradableCount}
-          discovering={boardMeta.discovering}
+          discovering={meta?.discovering ?? false}
         />
         {selected ? (
           <div className="min-w-0 flex-[1.2]">
-            <JupiterTokenHeader symbol={selected} row={selectedRow} />
+            <JupiterTokenHeader symbol={selected} row={selectedRow} marks={jupiterMarks} />
           </div>
         ) : null}
       </div>
@@ -823,7 +851,10 @@ function DexJupiterContent() {
               label={selected ? pairLabel(selected) : 'SOL/USDT'}
               depth={14}
               className="h-full min-h-[420px]"
-              pollMs={1_500}
+              pollMs={3_500}
+              fallbackMid={jupiterMid}
+              fallbackBid={orderBookBid}
+              fallbackAsk={orderBookAsk}
             />
           </div>
           <div className="min-h-[420px] min-w-0 flex-1 overflow-hidden xl:min-h-[520px]">
@@ -832,7 +863,7 @@ function DexJupiterContent() {
               symbol={selected}
               pairLabel={pairLabel(selected)}
               defaultInterval="1m"
-              pollMs={1_500}
+              pollMs={20_000}
               fetchCandles={fetchJupiterCandles}
               fetchLivePrice={fetchJupiterLivePrice}
               referencePrice={jupiterMid}
@@ -866,6 +897,10 @@ function DexJupiterContent() {
             label={selected ? pairLabel(selected) : 'SOL/USDT'}
             depth={12}
             className="max-h-[320px]"
+            pollMs={3_500}
+            fallbackMid={jupiterMid}
+            fallbackBid={orderBookBid}
+            fallbackAsk={orderBookAsk}
           />
         </div>
 

@@ -89,10 +89,22 @@ export function TradeAdvisor({
   }, [symbol, side, sizeUsdt, accountEquityUsdt])
 
   useEffect(() => {
-    void refresh()
-    const id = window.setInterval(() => void refresh(), pollIntervalMs)
-    return () => window.clearInterval(id)
-  }, [refresh, pollIntervalMs])
+    const timer = setTimeout(() => {
+      void refresh()
+    }, 350)
+
+    const onRefresh = () => {
+      void refresh()
+    }
+    window.addEventListener('dashboard:refresh', onRefresh)
+    window.addEventListener('trade:executed', onRefresh)
+
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('dashboard:refresh', onRefresh)
+      window.removeEventListener('trade:executed', onRefresh)
+    }
+  }, [refresh])
 
   if (!sizeUsdt || sizeUsdt <= 0) return null
 

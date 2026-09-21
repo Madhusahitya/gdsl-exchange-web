@@ -77,8 +77,22 @@ export function EnhancedSignalsPanel({
 
   useEffect(() => {
     void refresh()
-    const id = window.setInterval(() => void refresh(), pollIntervalMs)
-    return () => window.clearInterval(id)
+    const onRefresh = () => {
+      void refresh()
+    }
+    window.addEventListener('dashboard:refresh', onRefresh)
+    window.addEventListener('trade:executed', onRefresh)
+
+    let id: number | null = null
+    if (pollIntervalMs && pollIntervalMs >= 60_000) {
+      id = window.setInterval(() => void refresh(), pollIntervalMs)
+    }
+
+    return () => {
+      window.removeEventListener('dashboard:refresh', onRefresh)
+      window.removeEventListener('trade:executed', onRefresh)
+      if (id) window.clearInterval(id)
+    }
   }, [refresh, pollIntervalMs])
 
   return (
@@ -90,14 +104,25 @@ export function EnhancedSignalsPanel({
               Live multi-source trading signals
             </CardTitle>
             <p className="text-xs text-zinc-500">
-              Aggregated across TradingView-style technicals, futures funding, on-chain breadth, news sentiment, and macro. Updated every {(pollIntervalMs / 1000).toFixed(0)}s.
+              Aggregated across TradingView-style technicals, futures funding, on-chain breadth, news sentiment, and macro.
             </p>
           </div>
-          {snapshot ? (
-            <span className={`rounded-md border px-2.5 py-1 text-xs font-mono ${badgeColor(snapshot.consensus.signal)}`}>
-              {snapshot.symbol} · {snapshot.consensus.signal} · {Math.round(snapshot.consensus.confidence * 100)}%
-            </span>
-          ) : null}
+          <div className="flex items-center gap-2">
+            {snapshot ? (
+              <span className={`rounded-md border px-2.5 py-1 text-xs font-mono ${badgeColor(snapshot.consensus.signal)}`}>
+                {snapshot.symbol} · {snapshot.consensus.signal} · {Math.round(snapshot.consensus.confidence * 100)}%
+              </span>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void refresh()}
+              disabled={loading}
+              className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs text-zinc-400 hover:text-white transition disabled:opacity-50"
+              title="Refresh provider signals"
+            >
+              {loading ? '…' : '↻'}
+            </button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">

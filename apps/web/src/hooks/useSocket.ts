@@ -54,10 +54,8 @@ export function useSocket(options?: UseSocketOptions) {
 
     const onPortfolioUpdate = (data: PortfolioPayload) => {
       updatePortfolio({ totalValue: data.totalValue, pnl: data.pnl })
-      // Single refresh event — firing both caused double dashboard reloads / flicker.
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new Event('dashboard:refresh'))
-      }
+      // Real-time state updated directly in React context via WebSocket.
+      // Do not dispatch HTTP dashboard:refresh to avoid repeated network requests.
     }
 
     const onTradeFailed = (error: { type: string; reason?: string; message: string }) => {

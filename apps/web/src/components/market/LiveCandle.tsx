@@ -59,11 +59,100 @@ export function LiveCandle({ symbol, defaultInterval = '1m', pollMs = 5_000, pai
     }
   }, [symbol, interval])
 
+  // Initial snapshot on symbol or interval change
   useEffect(() => {
     void refresh()
-    const id = window.setInterval(() => void refresh(), pollMs)
-    return () => window.clearInterval(id)
-  }, [refresh, pollMs])
+  }, [refresh])
+
+  // Real-time WebSocket kline stream (replaces recurring HTTP polling)
+  useEffect(() => {
+    if (!symbol || typeof window === 'undefined') return
+
+    let isDisposed = false
+    let ws: WebSocket | null = null
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+
+    const streamSymbol = symbol.toLowerCase().replace('/', '')
+    const url = `wss://stream.binance.com:9443/ws/${streamSymbol}@kline_${interval}`
+
+    const connect = () => {
+      if (isDisposed) return
+      try {
+        ws = new WebSocket(url)
+
+        ws.onmessage = (event) => {
+          if (isDisposed) return
+          try {
+            const msg = JSON.parse(event.data) as {
+              k?: {
+                t: number
+                T: number
+                o: string
+                c: string
+                h: string
+                l: string
+                v: string
+              }
+            }
+            if (!msg?.k) return
+            const k = msg.k
+            const candle: Candle = {
+              openTime: Number(k.t),
+              open: parseFloat(k.o),
+              high: parseFloat(k.h),
+              low: parseFloat(k.l),
+              close: parseFloat(k.c),
+              volume: parseFloat(k.v),
+              closeTime: Number(k.T),
+            }
+
+            setData((prev) => {
+              if (prev.length === 0) return [candle]
+              const last = prev[prev.length - 1]
+              if (last.openTime === candle.openTime) {
+                const next = [...prev]
+                next[next.length - 1] = candle
+                return next
+              } else if (candle.openTime > last.openTime) {
+                const next = [...prev, candle]
+                return next.length > 60 ? next.slice(-60) : next
+              }
+              return prev
+            })
+            setUpdatedAt(new Date().toISOString())
+          } catch {
+            /* ignore malformed frame */
+          }
+        }
+
+        ws.onclose = () => {
+          ws = null
+          if (!isDisposed) {
+            reconnectTimer = setTimeout(connect, 3_000)
+          }
+        }
+
+        ws.onerror = () => {
+          ws?.close()
+        }
+      } catch {
+        if (!isDisposed) {
+          reconnectTimer = setTimeout(connect, 5_000)
+        }
+      }
+    }
+
+    connect()
+
+    return () => {
+      isDisposed = true
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      if (ws) {
+        ws.close()
+        ws = null
+      }
+    }
+  }, [symbol, interval])
 
   const last = data[data.length - 1]
   const prev = data[data.length - 2]
@@ -101,7 +190,7 @@ export function LiveCandle({ symbol, defaultInterval = '1m', pollMs = 5_000, pai
           </div>
         </div>
         <p className="text-[11px] text-zinc-500">
-          Streaming from Binance public klines · updates every {(pollMs / 1000).toFixed(0)}s
+          Streaming live from Binance WebSocket klines
           {updatedAt ? ` · last sync ${new Date(updatedAt).toLocaleTimeString()}` : ''}
         </p>
       </CardHeader>

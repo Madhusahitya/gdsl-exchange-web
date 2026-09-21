@@ -1,9 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
-import { engine } from '@/lib/api'
-
-type DepthLevel = { price: number; qty: number }
+import { useEffect } from 'react'
+import { useCexMarketStream, type DepthLevel } from '@/hooks/useCexMarketStream'
 
 function fmtPx(n: number): string {
   if (!Number.isFinite(n)) return '—'
@@ -19,6 +17,13 @@ function fmtQty(n: number): string {
   return n.toFixed(6)
 }
 
+export type CexPriceUpdate = {
+  bestBid: number | null
+  bestAsk: number | null
+  mid: number | null
+  spreadBps: number | null
+}
+
 type Props = {
   symbol: string
   /** Shown in the header — defaults to symbol. */
@@ -28,11 +33,14 @@ type Props = {
   depth?: number
   className?: string
   showMarketTrades?: boolean
+  onMidChange?: (mid: number | null, spreadBps: number | null) => void
+  onPricesChange?: (prices: CexPriceUpdate) => void
 }
 
 /**
  * Binance spot order book + recent prints. Jupiter pairs use the same
  * binanceSymbol for charting, so this gives a familiar CEX-style depth view.
+ * Streams real-time depth and trades over WebSocket with zero HTTP polling.
  */
 export function OrderBookPanel({
   symbol,
@@ -41,64 +49,15 @@ export function OrderBookPanel({
   depth = 14,
   className = '',
   showMarketTrades = true,
+  onMidChange,
+  onPricesChange,
 }: Props) {
-  const [bids, setBids] = useState<DepthLevel[]>([])
-  const [asks, setAsks] = useState<DepthLevel[]>([])
-  const [mid, setMid] = useState<number | null>(null)
-  const [spreadBps, setSpreadBps] = useState<number | null>(null)
-  const [trades, setTrades] = useState<
-    Array<{ id: number; price: number; qty: number; time: number; isBuyerMaker: boolean }>
-  >([])
-
-  const refreshBook = useCallback(async () => {
-    try {
-      const d = await engine.orderBook(symbol, depth)
-      setBids(d.bids.slice(0, depth))
-      setAsks([...d.asks].slice(0, depth).reverse())
-      setMid(d.mid)
-      setSpreadBps(d.spreadBps)
-    } catch {
-      /* optional feed */
-    }
-  }, [symbol, depth])
-
-  const refreshTrades = useCallback(async () => {
-    if (!showMarketTrades) return
-    try {
-      const res = await fetch(
-        `https://api.binance.com/api/v3/trades?symbol=${encodeURIComponent(symbol)}&limit=20`,
-      )
-      if (!res.ok) return
-      const rows = (await res.json()) as Array<{
-        id: number
-        price: string
-        qty: string
-        time: number
-        isBuyerMaker: boolean
-      }>
-      setTrades(
-        rows.map((r) => ({
-          id: r.id,
-          price: Number(r.price),
-          qty: Number(r.qty),
-          time: r.time,
-          isBuyerMaker: r.isBuyerMaker,
-        })),
-      )
-    } catch {
-      /* public feed optional */
-    }
-  }, [symbol, showMarketTrades])
+  const { bids, asks, bestBid, bestAsk, mid, spreadBps, trades } = useCexMarketStream(symbol, depth)
 
   useEffect(() => {
-    void refreshBook()
-    void refreshTrades()
-    const id = window.setInterval(() => {
-      void refreshBook()
-      void refreshTrades()
-    }, 2_000)
-    return () => window.clearInterval(id)
-  }, [refreshBook, refreshTrades])
+    onMidChange?.(mid, spreadBps)
+    onPricesChange?.({ bestBid, bestAsk, mid, spreadBps })
+  }, [bestBid, bestAsk, mid, spreadBps, onMidChange, onPricesChange])
 
   const maxAskQty = Math.max(...asks.map((a) => a.qty), 1e-9)
   const maxBidQty = Math.max(...bids.map((b) => b.qty), 1e-9)

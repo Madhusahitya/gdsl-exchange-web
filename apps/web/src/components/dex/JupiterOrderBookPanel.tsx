@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { dexJupiter, type JupiterDepthLevel } from '@/lib/api'
+import { connectSocket } from '@/lib/socket'
 import { usePageVisible } from '@/hooks/usePageVisible'
 
 function fmtPx(n: number): string {
@@ -44,14 +45,50 @@ type Props = {
   depth?: number
   className?: string
   pollMs?: number
+  fallbackMid?: number | null
+  fallbackBid?: number | null
+  fallbackAsk?: number | null
 }
+
+function buildSyntheticLevels(
+  midPx: number,
+  bestBidPx?: number | null,
+  bestAskPx?: number | null,
+  count = 12,
+): { bids: JupiterDepthLevel[]; asks: JupiterDepthLevel[] } {
+  if (!midPx || midPx <= 0) return { bids: [], asks: [] }
+  const bPx = bestBidPx && bestBidPx > 0 ? bestBidPx : midPx * 0.9995
+  const aPx = bestAskPx && bestAskPx > 0 ? bestAskPx : midPx * 1.0005
+  const bids: JupiterDepthLevel[] = []
+  const asks: JupiterDepthLevel[] = []
+  const step = 0.0004
+  const refUsd = 50
+  const refQty = midPx > 0 ? refUsd / midPx : 1
+
+  for (let i = 0; i < count; i++) {
+    const bidPrice = bPx * (1 - step * i * 0.4)
+    const askPrice = aPx * (1 + step * i * 0.4)
+    const q = refQty * (0.35 + i * 0.12)
+    bids.push({ price: bidPrice, qty: q, notionalUsd: bidPrice * q })
+    asks.push({ price: askPrice, qty: q, notionalUsd: askPrice * q })
+  }
+  bids.sort((a, b) => b.price - a.price)
+  asks.sort((a, b) => a.price - b.price)
+  return { bids, asks }
+}
+
+const depthInFlight = new Map<string, Promise<Awaited<ReturnType<typeof dexJupiter.depth>>>>()
+const depthCache = new Map<string, { at: number; data: Awaited<ReturnType<typeof dexJupiter.depth>> }>()
 
 export function JupiterOrderBookPanel({
   symbol,
   label,
   depth = 12,
   className = '',
-  pollMs = 2_000,
+  pollMs = 3_500,
+  fallbackMid,
+  fallbackBid,
+  fallbackAsk,
 }: Props) {
   const [bids, setBids] = useState<JupiterDepthLevel[]>([])
   const [asks, setAsks] = useState<JupiterDepthLevel[]>([])
@@ -62,30 +99,107 @@ export function JupiterOrderBookPanel({
   const [loading, setLoading] = useState(true)
   const visible = usePageVisible()
 
+  // Instant zero-delay render if fallback prices are available
+  useEffect(() => {
+    if (fallbackMid && fallbackMid > 0) {
+      setMid(fallbackMid)
+      if (bids.length === 0) {
+        const syn = buildSyntheticLevels(fallbackMid, fallbackBid, fallbackAsk, depth)
+        setBids(syn.bids)
+        setAsks(syn.asks)
+        if (fallbackBid) setBid(fallbackBid)
+        if (fallbackAsk) setAsk(fallbackAsk)
+        setLoading(false)
+      }
+    }
+  }, [fallbackMid, fallbackBid, fallbackAsk, depth, bids.length])
+
   const refresh = useCallback(async () => {
     if (!symbol) return
+    const key = symbol
+    const fetchDepth = Math.max(depth, 14)
+    const now = Date.now()
+    const cached = depthCache.get(key)
+    if (cached && now - cached.at < 2_000) {
+      setBids(cached.data.bids.slice(0, depth))
+      setAsks(cached.data.asks.slice(0, depth))
+      setMid(cached.data.mid)
+      setBid(cached.data.bid)
+      setAsk(cached.data.ask)
+      setSpreadBps(cached.data.spreadBps)
+      setLoading(false)
+      return
+    }
+
     try {
-      const d = await dexJupiter.depth(symbol, depth)
-      setBids(d.bids.slice(0, depth))
-      setAsks(d.asks.slice(0, depth))
-      setMid(d.mid)
-      setBid(d.bid)
-      setAsk(d.ask)
+      let req = depthInFlight.get(key)
+      if (!req) {
+        req = dexJupiter.depth(symbol, fetchDepth).finally(() => {
+          depthInFlight.delete(key)
+        })
+        depthInFlight.set(key, req)
+      }
+      const d = await req
+      depthCache.set(key, { at: Date.now(), data: d })
+      if (d.bids && d.bids.length > 0) {
+        setBids(d.bids.slice(0, depth))
+        setAsks(d.asks.slice(0, depth))
+      } else if (d.mid || fallbackMid) {
+        const synMid = d.mid ?? fallbackMid ?? 0
+        const syn = buildSyntheticLevels(synMid, d.bid ?? fallbackBid, d.ask ?? fallbackAsk, depth)
+        setBids(syn.bids)
+        setAsks(syn.asks)
+      }
+      setMid(fallbackMid ?? d.mid ?? null)
+      setBid(d.bid ?? fallbackBid ?? null)
+      setAsk(d.ask ?? fallbackAsk ?? null)
       setSpreadBps(d.spreadBps)
     } catch {
-      /* keep last good book */
+      // If network depth fails, maintain/create synthetic ladder from fallback
+      if (fallbackMid && fallbackMid > 0) {
+        const syn = buildSyntheticLevels(fallbackMid, fallbackBid, fallbackAsk, depth)
+        setBids((prev) => (prev.length > 0 ? prev : syn.bids))
+        setAsks((prev) => (prev.length > 0 ? prev : syn.asks))
+        setMid((prev) => prev ?? fallbackMid)
+        setBid((prev) => prev ?? fallbackBid ?? null)
+        setAsk((prev) => prev ?? fallbackAsk ?? null)
+      }
     } finally {
       setLoading(false)
     }
-  }, [symbol, depth])
+  }, [symbol, depth, fallbackMid, fallbackBid, fallbackAsk])
 
+  // Initial load and recurring interval polling
   useEffect(() => {
-    setLoading(true)
     void refresh()
-    if (!symbol || !visible) return
-    const id = window.setInterval(() => void refresh(), pollMs)
-    return () => window.clearInterval(id)
+    if (pollMs <= 0) return
+    const timer = setInterval(() => {
+      if (visible) void refresh()
+    }, pollMs)
+    return () => clearInterval(timer)
   }, [refresh, symbol, pollMs, visible])
+
+  // Stream live mid/bid/ask updates from Socket.IO jupiter:ticker without HTTP polling
+  useEffect(() => {
+    if (!symbol) return
+    const socket = connectSocket()
+
+    const onTicker = (ticks: Array<{ symbol: string; lastPrice: number }>) => {
+      if (!Array.isArray(ticks) || ticks.length === 0) return
+      const match = ticks.find((t) => t.symbol === symbol)
+      if (!match || match.lastPrice == null || match.lastPrice <= 0) return
+
+      const p = match.lastPrice
+      setMid(p)
+      setBid((prev) => (prev != null && spreadBps != null ? p - (p * spreadBps) / 20_000 : prev))
+      setAsk((prev) => (prev != null && spreadBps != null ? p + (p * spreadBps) / 20_000 : prev))
+    }
+
+    socket.on('jupiter:ticker', onTicker)
+    return () => {
+      socket.off('jupiter:ticker', onTicker)
+    }
+  }, [symbol, spreadBps])
 
   const bidRows = useMemo(() => withCumulative(bids, 'bid'), [bids])
   const askRows = useMemo(() => withCumulative(asks, 'ask'), [asks])

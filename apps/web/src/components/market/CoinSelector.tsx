@@ -45,35 +45,122 @@ function formatPct(value: number): string {
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`
 }
 
-export function CoinSelector({ options, value, onChange, pollMs = 12_000, compact = false }: Props) {
+export function CoinSelector({ options, value, onChange, compact = false }: Props) {
   const [rows, setRows] = useState<Record<string, MarketRow>>({})
 
+  // 1. Initial snapshot on mount
   useEffect(() => {
     let cancelled = false
-    const load = async () => {
-      try {
-        const data = await market.overview()
-        const byPair: Record<string, MarketRow> = {}
-        for (const r of data.rows ?? []) {
-          byPair[r.pair] = {
-            pair: r.pair,
-            symbol: r.symbol,
-            lastPrice: Number(r.lastPrice ?? 0),
-            changePercent24h: Number(r.changePercent24h ?? 0),
-          }
+    market.overview().then((data) => {
+      if (cancelled) return
+      const byPair: Record<string, MarketRow> = {}
+      for (const r of data.rows ?? []) {
+        byPair[r.pair] = {
+          pair: r.pair,
+          symbol: r.symbol,
+          lastPrice: Number(r.lastPrice ?? 0),
+          changePercent24h: Number(r.changePercent24h ?? 0),
         }
-        if (!cancelled) setRows(byPair)
-      } catch {
-        // best-effort
       }
-    }
-    void load()
-    const id = window.setInterval(() => void load(), pollMs)
+      setRows(byPair)
+    }).catch(() => {
+      // best-effort snapshot
+    })
     return () => {
       cancelled = true
-      window.clearInterval(id)
     }
-  }, [pollMs])
+  }, [])
+
+  // 2. Real-time WebSocket stream for all coin selector symbols
+  useEffect(() => {
+    if (typeof window === 'undefined' || options.length === 0) return
+
+    let isDisposed = false
+    let ws: WebSocket | null = null
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+
+    const validSymbols = Array.from(
+      new Set(
+        options
+          .map((o) => o.binanceSymbol.toLowerCase().replace('/', ''))
+          .filter((s) => s.length > 0),
+      ),
+    )
+    if (validSymbols.length === 0) return
+
+    const streams = validSymbols.map((s) => `${s}@miniTicker`).join('/')
+    const url = `wss://stream.binance.com:9443/stream?streams=${streams}`
+
+    const connect = () => {
+      if (isDisposed) return
+      try {
+        ws = new WebSocket(url)
+
+        ws.onmessage = (event) => {
+          if (isDisposed) return
+          try {
+            const message = JSON.parse(event.data) as {
+              data?: {
+                s?: string
+                c?: string
+                o?: string
+              }
+            }
+            const item = message.data
+            if (!item?.s || !item.c) return
+            const s = item.s
+            const close = Number(item.c)
+            const open = Number(item.o ?? 0)
+            const change = open > 0 ? ((close - open) / open) * 100 : 0
+
+            setRows((prev) => {
+              const existing = prev[s]
+              if (existing && existing.lastPrice === close && existing.changePercent24h === change) {
+                return prev
+              }
+              return {
+                ...prev,
+                [s]: {
+                  pair: s,
+                  symbol: s,
+                  lastPrice: close,
+                  changePercent24h: change,
+                },
+              }
+            })
+          } catch {
+            /* ignore */
+          }
+        }
+
+        ws.onclose = () => {
+          ws = null
+          if (!isDisposed) {
+            reconnectTimer = setTimeout(connect, 3_000)
+          }
+        }
+
+        ws.onerror = () => {
+          ws?.close()
+        }
+      } catch {
+        if (!isDisposed) {
+          reconnectTimer = setTimeout(connect, 5_000)
+        }
+      }
+    }
+
+    connect()
+
+    return () => {
+      isDisposed = true
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      if (ws) {
+        ws.close()
+        ws = null
+      }
+    }
+  }, [options])
 
   return (
     <div

@@ -349,6 +349,8 @@ export default function DexBotPage() {
   const [forcedFirstTrade, setForcedFirstTrade] = useState(false)
   const [prices, setPrices] = useState<number[]>([])
   const [lastPrice, setLastPrice] = useState<number | null>(null)
+  const lastPriceRef = useRef<number | null>(null)
+  lastPriceRef.current = lastPrice
   const [signal, setSignal] = useState<'BUY' | 'SELL' | 'HOLD'>('HOLD')
   const [smaDisplay, setSmaDisplay] = useState<number | null>(null)
   const [rsiDisplay, setRsiDisplay] = useState<number | null>(null)
@@ -573,9 +575,7 @@ export default function DexBotPage() {
       const v = await fetchFearGreedIndex()
       setFearGreed(v)
     }
-    load()
-    const id = setInterval(load, 90_000)
-    return () => clearInterval(id)
+    void load()
   }, [])
 
   const refreshOpenSignals = useCallback(async () => {
@@ -592,10 +592,13 @@ export default function DexBotPage() {
 
   useEffect(() => {
     void refreshOpenSignals()
-    const id = window.setInterval(() => {
+    const onRefresh = () => {
       void refreshOpenSignals()
-    }, OPEN_SIGNAL_POLL_MS)
-    return () => window.clearInterval(id)
+    }
+    window.addEventListener('dashboard:refresh', onRefresh)
+    return () => {
+      window.removeEventListener('dashboard:refresh', onRefresh)
+    }
   }, [refreshOpenSignals])
 
   const refreshDelegateStatus = useCallback(async () => {
@@ -609,10 +612,15 @@ export default function DexBotPage() {
 
   useEffect(() => {
     void refreshDelegateStatus()
-    const id = window.setInterval(() => {
+    const onRefresh = () => {
       void refreshDelegateStatus()
-    }, 30_000)
-    return () => window.clearInterval(id)
+    }
+    window.addEventListener('dashboard:refresh', onRefresh)
+    window.addEventListener('trade:executed', onRefresh)
+    return () => {
+      window.removeEventListener('dashboard:refresh', onRefresh)
+      window.removeEventListener('trade:executed', onRefresh)
+    }
   }, [refreshDelegateStatus])
 
   /** Linked Telegram (Settings → Telegram) + opted in via checkbox below. */
@@ -672,14 +680,11 @@ export default function DexBotPage() {
 
     // 1) Seed the rolling buffer with the last ~30 1-minute closes so the
     //    strategy warmup gate (default 16 samples) is satisfied the moment
-    //    the page mounts. Without this the bot would idle for ~4 minutes
-    //    waiting for live poll ticks to accumulate.
+    //    the page mounts.
     void (async () => {
       const closes = await fetchBinanceKlineCloses(selectedToken.binanceSymbol, 30, '1m')
       if (cancelled || closes.length === 0) return
       setPrices((prev) => {
-        // If the live poller already pushed a tick, append the historical
-        // closes BEFORE that fresh tick to preserve chronological order.
         const merged = [...closes, ...prev]
         return merged.length > 120 ? merged.slice(-120) : merged
       })
@@ -690,23 +695,70 @@ export default function DexBotPage() {
       }
     })()
 
-    const tick = async () => {
+    // 2) Real-time WebSocket connection to Binance for continuous live price ticks
+    let ws: WebSocket | null = null
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    let lastTickTime = 0
+    const streamSymbol = selectedToken.binanceSymbol.toLowerCase().replace('/', '')
+    const url = `wss://stream.binance.com:9443/ws/${streamSymbol}@trade`
+
+    const connect = () => {
       if (cancelled) return
-      const p = await fetchBinancePrice(selectedToken.binanceSymbol)
-      if (p === null) return
-      setLastPriceAt(Date.now())
-      setLastPrice(p)
-      setPrices((prev) => {
-        const next = [...prev, p]
-        if (next.length > 120) next.shift()
-        return next
-      })
+      try {
+        ws = new WebSocket(url)
+
+        ws.onmessage = (event) => {
+          if (cancelled) return
+          try {
+            const data = JSON.parse(event.data) as { p?: string; T?: number }
+            if (!data?.p) return
+            const p = parseFloat(data.p)
+            if (!Number.isFinite(p) || p <= 0) return
+
+            const now = data.T ?? Date.now()
+            setLastPrice(p)
+            setLastPriceAt(now)
+
+            // Throttle rolling buffer updates to at most once every 500ms to avoid excessive recalculations
+            if (now - lastTickTime >= 500) {
+              lastTickTime = now
+              setPrices((prev) => {
+                const next = [...prev, p]
+                if (next.length > 120) next.shift()
+                return next
+              })
+            }
+          } catch {
+            /* ignore frame */
+          }
+        }
+
+        ws.onclose = () => {
+          ws = null
+          if (!cancelled) {
+            reconnectTimer = setTimeout(connect, 3_000)
+          }
+        }
+
+        ws.onerror = () => {
+          ws?.close()
+        }
+      } catch {
+        if (!cancelled) {
+          reconnectTimer = setTimeout(connect, 5_000)
+        }
+      }
     }
-    void tick()
-    const id = setInterval(tick, PRICE_POLL_MS)
+
+    connect()
+
     return () => {
       cancelled = true
-      clearInterval(id)
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      if (ws) {
+        ws.close()
+        ws = null
+      }
     }
   }, [selectedToken])
 
@@ -830,10 +882,8 @@ export default function DexBotPage() {
                 ])
                 usdtN = Number(formatUnits(usdtRaw as bigint, 18))
                 const tokN = Number(formatUnits(tokRaw as bigint, tokenDecimals))
-                const refPx =
-                  lastPrice != null && Number.isFinite(lastPrice) && lastPrice > 0
-                    ? lastPrice
-                    : ((await fetchBinancePrice(selectedToken.binanceSymbol)) ?? 0)
+                const lp = lastPriceRef.current
+                const refPx = lp != null && Number.isFinite(lp) && lp > 0 ? lp : 0
                 baseUsd = refPx > 0 ? tokN * refPx : 0
               }
             } catch {
@@ -890,20 +940,20 @@ export default function DexBotPage() {
     bscPublicClient,
     tokenAddress,
     tokenDecimals,
-    lastPrice,
   ])
 
   useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      if (cancelled) return
-      await refreshPersonalWalletStatus()
+    void refreshPersonalWalletStatus()
+    const onRefresh = () => {
+      void refreshPersonalWalletStatus()
     }
-    void load()
-    const id = window.setInterval(() => void load(), 30_000)
+    window.addEventListener('dashboard:refresh', onRefresh)
+    window.addEventListener('trade:executed', onRefresh)
+    window.addEventListener('portfolio:update', onRefresh)
     return () => {
-      cancelled = true
-      window.clearInterval(id)
+      window.removeEventListener('dashboard:refresh', onRefresh)
+      window.removeEventListener('trade:executed', onRefresh)
+      window.removeEventListener('portfolio:update', onRefresh)
     }
   }, [refreshPersonalWalletStatus])
 
@@ -927,10 +977,15 @@ export default function DexBotPage() {
       }
     }
     void load()
-    const id = window.setInterval(() => void load(), 120_000)
+    const onRefresh = () => {
+      void load()
+    }
+    window.addEventListener('dashboard:refresh', onRefresh)
+    window.addEventListener('trade:executed', onRefresh)
     return () => {
       cancelled = true
-      window.clearInterval(id)
+      window.removeEventListener('dashboard:refresh', onRefresh)
+      window.removeEventListener('trade:executed', onRefresh)
     }
   }, [usePersonalWallet, personalWalletReady])
 
@@ -3199,7 +3254,7 @@ export default function DexBotPage() {
                 : '—'}
             </p>
           )}
-          <EnhancedSignalsPanel symbol={selectedToken.binanceSymbol} showMultiLeaderboard pollIntervalMs={20000} />
+          <EnhancedSignalsPanel symbol={selectedToken.binanceSymbol} showMultiLeaderboard />
 
           <div className="rounded-lg border border-white/10 bg-white/5 p-3">
             <p className="text-[11px] uppercase tracking-widest text-zinc-500">Open-source signal providers</p>
