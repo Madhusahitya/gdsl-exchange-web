@@ -56,7 +56,13 @@ export function JupiterCouncilStrip({ watchSymbol }: Props) {
       <span className="text-zinc-600">|</span>
       <span className={smOn ? 'text-emerald-400' : 'text-zinc-500'}>
         Super Machine {smOn ? 'ON' : 'off'}
-        {smWatch ? ` · ${smWatch.replace(/USDT$/i, '')}` : watchSymbol ? ` · watching ${watchSymbol.replace(/USDT$/i, '')}` : ''}
+        {smOn && smWatch
+          ? ` · ${smWatch.replace(/USDT$/i, '')}`
+          : smOn && !smWatch
+            ? ' · auto-scan all tokens'
+            : watchSymbol
+              ? ` · chart ${watchSymbol.replace(/USDT$/i, '')}`
+              : ''}
       </span>
       <Link href="/agents" className="ml-auto text-violet-400 hover:text-violet-300">
         Open council →

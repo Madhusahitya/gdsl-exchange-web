@@ -1052,11 +1052,11 @@ function DexJupiterContent() {
                             type="button"
                             size="sm"
                             variant="outline"
-                            disabled={skimBusyMint === p.mint || (p.estNetPnlUsd ?? 0) <= 0}
+                            disabled={skimBusyMint === p.mint || !p.inProfit}
                             title={
-                              (p.estNetPnlUsd ?? 0) > 0
+                              p.inProfit
                                 ? 'Bank the profit slice into USDC now — position keeps running'
-                                : 'Skim unlocks once the position is in profit'
+                                : 'Skim unlocks once the live sell price is above your fill'
                             }
                             className="h-6 border-amber-500/30 px-1.5 text-[9px] text-amber-300 hover:bg-amber-500/10"
                             onClick={(e) => {
