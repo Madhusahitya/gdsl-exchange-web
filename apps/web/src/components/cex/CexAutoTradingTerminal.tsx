@@ -16,6 +16,7 @@ import { CexProfitControls } from '@/components/cex/CexProfitControls'
 import { CexMarketTradePanel } from '@/components/cex/CexMarketTradePanel'
 import { CexChartMarketBar } from '@/components/cex/CexChartMarketBar'
 import { CexBinanceAccountPanel } from '@/components/cex/CexBinanceAccountPanel'
+import { CexCouncilStrip } from '@/components/cex/CexCouncilStrip'
 import { useCexMarketTrade } from '@/hooks/useCexMarketTrade'
 import { useSocket } from '@/hooks/useSocket'
 import { LivePulse, LiveNumber } from '@/components/ui/LiveNumber'
@@ -356,8 +357,14 @@ export function CexAutoTradingTerminal() {
               type="button"
               role="switch"
               aria-checked={smEnabled}
-              disabled={smBusy || (!smEnabled && !ready)}
-              onClick={() => void toggleSm()}
+              disabled={smBusy}
+              onClick={() => {
+                if (!smEnabled && !ready) {
+                  toast.error(blockers[0] ?? 'Connect Binance first. Enable risk in Settings if asked.')
+                  return
+                }
+                void toggleSm()
+              }}
               className={`relative h-6 w-11 rounded-full transition ${
                 smEnabled ? 'bg-emerald-500' : 'bg-zinc-600'
               } disabled:opacity-40`}
@@ -390,10 +397,8 @@ export function CexAutoTradingTerminal() {
         </div>
       </div>
 
-      {!ready && blockers[0] ? (
-        <p className="rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-xs text-amber-200/90">
-          {blockers[0]}
-        </p>
+      {mode === 'auto' ? (
+        <CexCouncilStrip watchSymbol={symbol} smEnabled={smEnabled} smRunning={smRunning} />
       ) : null}
 
       {/* Pair strip */}

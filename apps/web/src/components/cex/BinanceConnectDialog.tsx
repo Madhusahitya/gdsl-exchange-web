@@ -44,6 +44,7 @@ export function BinanceConnectDialog({ open, onOpenChange }: Props) {
   const [apiKey, setApiKey] = useState('')
   const [apiSecret, setApiSecret] = useState('')
   const [connecting, setConnecting] = useState(false)
+  const [disconnecting, setDisconnecting] = useState(false)
   const [connectErr, setConnectErr] = useState('')
   const [outboundIp, setOutboundIp] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -85,16 +86,36 @@ export function BinanceConnectDialog({ open, onOpenChange }: Props) {
       return
     }
     try {
+      if (active?.id) {
+        await exchange.deactivateConnection(active.id).catch(() => null)
+      }
       await exchange.createConnection({ exchange: 'BINANCE', label, apiKey: k, apiSecret: s })
       setApiKey('')
       setApiSecret('')
-      toast.success('Binance connected')
+      toast.success(active ? 'Binance key replaced' : 'Binance connected')
       await refresh()
       window.dispatchEvent(new Event('dashboard:refresh'))
     } catch (e) {
       setConnectErr(formatAxiosError(e, 'Connection failed'))
     } finally {
       setConnecting(false)
+    }
+  }
+
+  const disconnect = async () => {
+    if (!active) return
+    setDisconnecting(true)
+    setConnectErr('')
+    try {
+      await exchange.deactivateConnection(active.id)
+      setConnections([])
+      setQuoteTotal(0)
+      toast.success('Binance disconnected')
+      window.dispatchEvent(new Event('dashboard:refresh'))
+    } catch (e) {
+      setConnectErr(formatAxiosError(e, 'Disconnect failed'))
+    } finally {
+      setDisconnecting(false)
     }
   }
 
@@ -105,8 +126,8 @@ export function BinanceConnectDialog({ open, onOpenChange }: Props) {
           <DialogTitle>Binance</DialogTitle>
         </DialogHeader>
 
-        {active ? (
-          <div className="space-y-3">
+        <div className="space-y-3">
+          {active ? (
             <div className="flex items-center justify-between rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2.5">
               <div>
                 <p className="text-sm font-medium text-emerald-100">{active.label ?? 'Binance'}</p>
@@ -114,64 +135,62 @@ export function BinanceConnectDialog({ open, onOpenChange }: Props) {
                   {loading ? '…' : `$${quoteTotal.toFixed(2)}`}
                 </p>
               </div>
-              <span className="h-2 w-2 rounded-full bg-emerald-400" aria-hidden />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" size="sm" onClick={() => void refresh()}>
-                Refresh
-              </Button>
-              <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-                Done
-              </Button>
-            </DialogFooter>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <Input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="Label"
-              className="h-9 border-white/10 bg-black/40 text-sm"
-            />
-            <Input
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="API key"
-              autoComplete="off"
-              className="h-9 border-white/10 bg-black/40 font-mono text-xs"
-            />
-            <Input
-              value={apiSecret}
-              onChange={(e) => setApiSecret(e.target.value)}
-              placeholder="API secret"
-              type="password"
-              autoComplete="off"
-              className="h-9 border-white/10 bg-black/40 font-mono text-xs"
-            />
-            {connectErr ? <p className="text-[11px] text-rose-300">{connectErr}</p> : null}
-            {outboundIp ? (
-              <p className="font-mono text-[10px] text-zinc-500">{outboundIp}</p>
-            ) : null}
-            <DialogFooter className="gap-2 sm:justify-between">
-              <a
-                href="https://www.binance.com/en/my/settings/api-management"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="self-center text-[11px] text-sky-400 hover:text-sky-300"
-              >
-                API settings
-              </a>
               <Button
                 type="button"
-                className="bg-emerald-400 text-black hover:bg-emerald-300"
-                disabled={connecting || !apiKey || !apiSecret}
-                onClick={() => void connect()}
+                variant="outline"
+                size="sm"
+                className="h-7 border-rose-500/30 text-xs text-rose-200 hover:bg-rose-500/10"
+                disabled={disconnecting}
+                onClick={() => void disconnect()}
               >
-                {connecting ? 'Connecting…' : 'Connect'}
+                {disconnecting ? '…' : 'Disconnect'}
               </Button>
-            </DialogFooter>
-          </div>
-        )}
+            </div>
+          ) : null}
+
+          <Input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="Label"
+            className="h-9 border-white/10 bg-black/40 text-sm"
+          />
+          <Input
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="API key"
+            autoComplete="off"
+            className="h-9 border-white/10 bg-black/40 font-mono text-xs"
+          />
+          <Input
+            value={apiSecret}
+            onChange={(e) => setApiSecret(e.target.value)}
+            placeholder="API secret"
+            type="password"
+            autoComplete="off"
+            className="h-9 border-white/10 bg-black/40 font-mono text-xs"
+          />
+          {connectErr ? <p className="text-[11px] text-rose-300">{connectErr}</p> : null}
+          {outboundIp ? <p className="font-mono text-[10px] text-zinc-500">{outboundIp}</p> : null}
+
+          <DialogFooter className="gap-2 sm:justify-between">
+            <a
+              href="https://www.binance.com/en/my/settings/api-management"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="self-center text-[11px] text-sky-400 hover:text-sky-300"
+            >
+              API settings
+            </a>
+            <Button
+              type="button"
+              className="bg-emerald-400 text-black hover:bg-emerald-300"
+              disabled={connecting || !apiKey || !apiSecret}
+              onClick={() => void connect()}
+            >
+              {connecting ? 'Connecting…' : active ? 'Replace key' : 'Connect'}
+            </Button>
+          </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   )
