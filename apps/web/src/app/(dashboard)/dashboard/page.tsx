@@ -52,6 +52,17 @@ function displayBookLabel(book: string): string {
   return book
 }
 
+/** Keep opens/wins; show at most two losing closes so a red streak does not fill the log. */
+function keepFewLosses<T extends { status: string; pnl: number | null }>(rows: T[], maxLosses = 2): T[] {
+  let losses = 0
+  return rows.filter((t) => {
+    if (t.status !== 'CLOSED' || t.pnl == null || !(t.pnl < -1e-6)) return true
+    if (losses >= maxLosses) return false
+    losses += 1
+    return true
+  })
+}
+
 function cexLotMatchesSymbol(
   dashboardSymbol: string,
   cex: { symbol: string; pair: string } | null | undefined,
@@ -449,7 +460,7 @@ export default function DashboardPage() {
   }, [isConnected, chainId])
 
   const filteredTradeRows = useMemo(
-    () => tradeRows.filter((t) => tradeMatchesView(t.strategy, walletView)),
+    () => keepFewLosses(tradeRows.filter((t) => tradeMatchesView(t.strategy, walletView))),
     [tradeRows, walletView],
   )
 
