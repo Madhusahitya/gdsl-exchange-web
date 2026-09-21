@@ -146,10 +146,12 @@ export function CexBinanceAccountPanel({ symbol, onReadyChange, onUsdtChange }: 
       return
     }
     try {
+      const existing = connections.find((c) => c.isActive && c.canTrade)
+      if (existing) await exchange.deactivateConnection(existing.id).catch(() => null)
       await exchange.createConnection({ exchange: 'BINANCE', label, apiKey: k, apiSecret: s })
       setApiKey('')
       setApiSecret('')
-      toast.success('Binance connected — loading balances…')
+      toast.success(existing ? 'Binance key replaced' : 'Binance connected')
       await refresh()
       setOpen(true)
     } catch (e) {
@@ -168,6 +170,29 @@ export function CexBinanceAccountPanel({ symbol, onReadyChange, onUsdtChange }: 
       await refresh()
     } catch (e) {
       toast.error(formatAxiosError(e, 'Connection test failed'))
+    }
+  }
+
+  const disconnect = async () => {
+    const activeConn = connections.find((c) => c.id === connId) ?? connections.find((c) => c.isActive)
+    if (!activeConn) return
+    try {
+      await exchange.deactivateConnection(activeConn.id)
+      setConnections([])
+      setConnId(null)
+      setConnected(false)
+      setReady(false)
+      setQuoteTotal(0)
+      setUsdt(0)
+      setUsdc(0)
+      setBaseQty(0)
+      setTopAssets([])
+      onReadyChange?.(false, null, ['Connect your Binance account (trade-only key, withdrawals off).'])
+      onUsdtChange?.(0)
+      toast.success('Binance disconnected')
+      window.dispatchEvent(new Event('dashboard:refresh'))
+    } catch (e) {
+      toast.error(formatAxiosError(e, 'Disconnect failed'))
     }
   }
 
@@ -243,22 +268,6 @@ export function CexBinanceAccountPanel({ symbol, onReadyChange, onUsdtChange }: 
               </div>
             ) : null}
 
-            {connected && !balanceError && quoteTotal < 5 && baseQty <= 0 ? (
-              <p className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200/90">
-                Account linked but no spendable balance found. Deposit at least <strong>$5 USDT or USDC</strong>{' '}
-                on{' '}
-                <a
-                  href="https://www.binance.com/en/my/wallet/account/main"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline"
-                >
-                  Binance → Wallet
-                </a>{' '}
-                (Spot wallet), then click Refresh balances.
-              </p>
-            ) : null}
-
             {topAssets.length > 0 ? (
               <div className="mt-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2">
                 <p className="text-[10px] uppercase text-zinc-500">Spot balances</p>
@@ -281,77 +290,68 @@ export function CexBinanceAccountPanel({ symbol, onReadyChange, onUsdtChange }: 
               </ul>
             ) : null}
 
-            {!activeConn ? (
-              <div className="mt-3 space-y-2">
-                <p className="text-[11px] font-medium text-zinc-300">Step 1 — Create key on Binance</p>
-                <p className="text-[10px] text-zinc-500">
-                  Enable <strong className="text-zinc-400">Reading</strong> +{' '}
-                  <strong className="text-zinc-400">Spot trading</strong>. Turn{' '}
-                  <strong className="text-zinc-400">Withdrawals OFF</strong>.
-                </p>
-                <Input
-                  value={label}
-                  onChange={(e) => setLabel(e.target.value)}
-                  placeholder="Label (e.g. Primary Binance)"
-                  className="h-9 border-white/10 bg-black/40 text-sm"
-                />
-                <Input
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="Paste API key"
-                  autoComplete="off"
-                  className="h-9 border-white/10 bg-black/40 font-mono text-xs"
-                />
-                <Input
-                  value={apiSecret}
-                  onChange={(e) => setApiSecret(e.target.value)}
-                  placeholder="Paste API secret"
-                  type="password"
-                  autoComplete="off"
-                  className="h-9 border-white/10 bg-black/40 font-mono text-xs"
-                />
-                {connectErr ? <p className="text-[11px] text-rose-300">{connectErr}</p> : null}
-                {outboundIp ? (
-                  <p className="text-[10px] text-zinc-600">
-                    IP whitelist (if enabled): <code className="text-sky-400">{outboundIp}</code>
-                  </p>
-                ) : null}
-                <Button
-                  type="button"
-                  className="w-full"
-                  disabled={connecting || !apiKey || !apiSecret}
-                  onClick={() => void connect()}
-                >
-                  {connecting ? 'Connecting…' : 'Connect Binance'}
-                </Button>
-                <a
-                  href="https://www.binance.com/en/my/settings/api-management"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block text-center text-[10px] text-sky-400 underline"
-                >
-                  Open Binance API settings →
-                </a>
-              </div>
-            ) : (
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => void refresh()}>
-                  Refresh balances
-                </Button>
-                <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => void testAndRefresh()}>
-                  Test connection
-                </Button>
-                {!ready ? (
-                  <p className="w-full text-[10px] text-zinc-500">
-                    Enable risk policy in{' '}
-                    <a href="/settings" className="text-sky-400 underline">
-                      Settings
-                    </a>{' '}
-                    to turn on Super Machine.
-                  </p>
-                ) : null}
-              </div>
-            )}
+            <div className="mt-3 space-y-2">
+              {activeConn ? (
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => void refresh()}>
+                    Refresh
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => void testAndRefresh()}>
+                    Test
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="border-rose-500/30 text-xs text-rose-200 hover:bg-rose-500/10"
+                    onClick={() => void disconnect()}
+                  >
+                    Disconnect
+                  </Button>
+                </div>
+              ) : null}
+              <Input
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="Label"
+                className="h-9 border-white/10 bg-black/40 text-sm"
+              />
+              <Input
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="API key"
+                autoComplete="off"
+                className="h-9 border-white/10 bg-black/40 font-mono text-xs"
+              />
+              <Input
+                value={apiSecret}
+                onChange={(e) => setApiSecret(e.target.value)}
+                placeholder="API secret"
+                type="password"
+                autoComplete="off"
+                className="h-9 border-white/10 bg-black/40 font-mono text-xs"
+              />
+              {connectErr ? <p className="text-[11px] text-rose-300">{connectErr}</p> : null}
+              {outboundIp ? (
+                <p className="font-mono text-[10px] text-zinc-500">{outboundIp}</p>
+              ) : null}
+              <Button
+                type="button"
+                className="w-full"
+                disabled={connecting || !apiKey || !apiSecret}
+                onClick={() => void connect()}
+              >
+                {connecting ? 'Connecting…' : activeConn ? 'Replace key' : 'Connect'}
+              </Button>
+              <a
+                href="https://www.binance.com/en/my/settings/api-management"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block text-center text-[10px] text-sky-400 hover:text-sky-300"
+              >
+                API settings
+              </a>
+            </div>
           </div>
         </>
       ) : null}

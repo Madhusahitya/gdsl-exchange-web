@@ -38,6 +38,7 @@ import { SolanaConvertPanel } from '@/components/dex/SolanaConvertPanel'
 import { BscConvertPanel } from '@/components/dex/BscConvertPanel'
 import {
   dexJupiter,
+  exchange,
   personalWallet,
   type PersonalWalletSummary,
 } from '@/lib/api'
@@ -78,6 +79,7 @@ export function WalletActions() {
   const [connectChooserOpen, setConnectChooserOpen] = useState(false)
   const [connectOpen, setConnectOpen] = useState(false)
   const [binanceOpen, setBinanceOpen] = useState(false)
+  const [binanceLinked, setBinanceLinked] = useState(false)
   const [depositOpen, setDepositOpen] = useState(false)
   const [withdrawOpen, setWithdrawOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
@@ -129,6 +131,17 @@ export function WalletActions() {
   useEffect(() => {
     void refreshWallet()
   }, [])
+
+  useEffect(() => {
+    if (!connectChooserOpen && !binanceOpen) return
+    void exchange
+      .listConnections()
+      .then((conns) => {
+        const list = Array.isArray(conns) ? conns : []
+        setBinanceLinked(list.some((c: { isActive?: boolean; canTrade?: boolean }) => c.isActive && c.canTrade))
+      })
+      .catch(() => null)
+  }, [connectChooserOpen, binanceOpen])
 
   useEffect(() => {
     if (!isSolanaContext) return
@@ -632,7 +645,7 @@ export function WalletActions() {
               className="flex w-full items-center justify-between rounded-xl bg-white/[0.06] px-4 py-3 text-left transition hover:bg-white/[0.1]"
             >
               <span className="text-sm font-semibold text-white">Binance</span>
-              <span className="text-[11px] text-zinc-500">API</span>
+              <span className="text-[11px] text-zinc-500">{binanceLinked ? 'Linked' : 'API key'}</span>
             </button>
             <button
               type="button"
