@@ -101,6 +101,18 @@ export type PreflightStep = {
 }
 
 const SCAN_MODE_LS = 'jupiter_sm_scan_mode'
+/** Survives Solana tab unmount so the toggle does not flash OFF while settings refetch. */
+const ENABLED_LS = 'jupiter_sm_enabled'
+
+function readCachedEnabled(): boolean {
+  if (typeof window === 'undefined') return false
+  return sessionStorage.getItem(ENABLED_LS) === 'true'
+}
+
+function writeCachedEnabled(enabled: boolean): void {
+  if (typeof window === 'undefined') return
+  sessionStorage.setItem(ENABLED_LS, enabled ? 'true' : 'false')
+}
 
 export function JupiterSuperMachinePanel({
   watchSymbol,
@@ -110,7 +122,7 @@ export function JupiterSuperMachinePanel({
   onPreflightApply?: (symbol: string, slippagePct: number) => void
 }) {
   const [settings, setSettings] = useState<JupiterSuperMachineSettings>({
-    enabled: false,
+    enabled: readCachedEnabled(),
     maxTradeUsd: 25,
     maxOpenPositions: 3,
     maxDailyTrades: 20,
@@ -160,6 +172,7 @@ export function JupiterSuperMachinePanel({
         dexJupiter.superMachineStatus(),
       ])
       setSettings(s)
+      writeCachedEnabled(s.enabled)
       setStatus(st)
       setHydrated(true)
       if (Array.isArray(st.activity) && st.activity.length > 0) {
@@ -173,12 +186,18 @@ export function JupiterSuperMachinePanel({
         })
       }
     } catch {
-      // transient — keep last known state
+      // transient — keep cached toggle + schedule one fast retry on remount
     }
   }, [])
 
   useEffect(() => {
     void refresh()
+    const retry = window.setTimeout(() => void refresh(), 1500)
+    const id = setInterval(() => void refresh(), 12_000)
+    return () => {
+      window.clearTimeout(retry)
+      clearInterval(id)
+    }
   }, [refresh])
 
   // Real-time: push agent activity straight into the terminal via Socket.IO.
@@ -198,7 +217,11 @@ export function JupiterSuperMachinePanel({
         return [event, ...prev]
       })
     }
-    const onSettings = (next: JupiterSuperMachineSettings) => setSettings(next)
+    const onSettings = (next: JupiterSuperMachineSettings) => {
+      setSettings(next)
+      writeCachedEnabled(next.enabled)
+      setHydrated(true)
+    }
     const onPreflight = async ({ steps }: { steps: PreflightStep[] }) => {
       setPreflightRunning(true)
       pulseAgentCursor()
@@ -249,6 +272,7 @@ export function JupiterSuperMachinePanel({
     try {
       const saved = await dexJupiter.saveSuperMachineSettings(patch)
       setSettings(saved)
+      writeCachedEnabled(saved.enabled)
       if (saved.enabled && !prevEnabled) {
         toast.success('Super Machine activated — agents scanning every 15s')
       } else if (!saved.enabled && prevEnabled) {
@@ -298,15 +322,17 @@ export function JupiterSuperMachinePanel({
   const winRate = stats && stats.totalTrades > 0 ? `${(stats.winRate * 100).toFixed(0)}%` : '—'
   const pnl = stats ? `${stats.totalPnlUsd >= 0 ? '+' : ''}$${stats.totalPnlUsd.toFixed(2)}` : '$0.00'
   const activeStrategy = detectStrategy(settings)
+  /** Server truth when loaded; until then keep last session toggle so navigation does not look like OFF. */
+  const toggleOn = hydrated ? settings.enabled : readCachedEnabled()
 
   return (
     <div
       className={cn(
         'relative flex min-h-0 flex-col rounded-lg border p-3',
-        settings.enabled ? 'border-violet-500/50 bg-violet-500/5' : 'border-zinc-700/50 bg-zinc-800/30',
+        toggleOn ? 'border-violet-500/50 bg-violet-500/5' : 'border-zinc-700/50 bg-zinc-800/30',
       )}
     >
-      {(settings.enabled || preflightRunning) && agentCursor.visible ? (
+      {(toggleOn || preflightRunning) && agentCursor.visible ? (
         <span
           className="pointer-events-none absolute z-[1] h-1.5 w-1.5 rounded-full bg-violet-400/90 shadow-[0_0_6px_rgba(167,139,250,0.7)] transition-all duration-500 ease-out"
           style={{ left: `${agentCursor.x}%`, top: `${agentCursor.y}%` }}
@@ -320,20 +346,23 @@ export function JupiterSuperMachinePanel({
           <div
             className={cn(
               'h-2 w-2 rounded-full',
-              settings.enabled && !settings.emergencyStop ? 'animate-pulse bg-violet-500' : 'bg-zinc-600',
+              toggleOn && !settings.emergencyStop ? 'animate-pulse bg-violet-500' : 'bg-zinc-600',
             )}
           />
           <span className="text-sm font-medium text-zinc-100">Super Machine</span>
-          {settings.enabled && (
+          {toggleOn && hydrated && (
             <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[9px] text-violet-300">LIVE</span>
           )}
+          {!hydrated ? (
+            <span className="rounded bg-zinc-600/40 px-1.5 py-0.5 text-[9px] text-zinc-400">sync…</span>
+          ) : null}
         </div>
         <label className="relative inline-flex cursor-pointer items-center">
           <input
             type="checkbox"
             className="peer sr-only"
-            checked={settings.enabled}
-            disabled={settings.emergencyStop || saving}
+            checked={toggleOn}
+            disabled={settings.emergencyStop || saving || !hydrated}
             onChange={(e) =>
               void save({
                 enabled: e.target.checked,
