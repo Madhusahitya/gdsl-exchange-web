@@ -1,7 +1,6 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { inbox, type InboxCategory, type InboxMessageRow } from '@/lib/api'
@@ -136,9 +135,6 @@ export default function InboxPage() {
         </Button>
         <Button type="button" variant="outline" size="sm" className="ml-auto border-white/15" onClick={() => void markAll()}>
           Mark all read
-        </Button>
-        <Button asChild variant="outline" size="sm" className="border-emerald-500/30 text-emerald-300">
-          <Link href="/token-trading">Token Trading</Link>
         </Button>
       </div>
 

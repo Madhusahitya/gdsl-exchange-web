@@ -8,15 +8,6 @@ import { auth, invalidateAuthMeCache } from '@/lib/api'
 
 const navItems = [
   {
-    name: 'Home',
-    href: '/',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-      </svg>
-    ),
-  },
-  {
     name: 'Dashboard',
     href: '/dashboard',
     icon: (
@@ -61,15 +52,6 @@ const navItems = [
       </svg>
     ),
   },
-  {
-    name: 'DEX Terminal',
-    href: '/dex',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-      </svg>
-    ),
-  },
 ]
 
 export default function Sidebar() {
@@ -111,7 +93,7 @@ export default function Sidebar() {
   return (
     <aside className="fixed left-0 top-0 h-screen w-64 border-r border-emerald-500/20 bg-[#030705] flex flex-col z-30">
       <div className="p-5 border-b border-emerald-500/15">
-        <Link href="/" className="block">
+        <Link href="/dashboard" className="block">
           <BrandMark />
           <p className="text-[10px] font-mono text-emerald-600/90 mt-2 flex items-center gap-2">
             <span className="relative flex h-2 w-2">

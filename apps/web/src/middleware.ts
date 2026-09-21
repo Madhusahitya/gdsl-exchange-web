@@ -34,6 +34,19 @@ export function middleware(request: NextRequest) {
   const csrf = request.cookies.get('cf_csrf')?.value
   const hasSession = Boolean(token || refresh || csrf)
 
+  const retired =
+    pathname === '/dex' ||
+    pathname.startsWith('/dex/') ||
+    pathname === '/dex-swap' ||
+    pathname.startsWith('/dex-swap/') ||
+    pathname === '/dex-1inch' ||
+    pathname.startsWith('/dex-1inch/') ||
+    pathname === '/token-trading' ||
+    pathname.startsWith('/token-trading/')
+  if (retired) {
+    return NextResponse.redirect(new URL('/dashboard', request.url))
+  }
+
   const needsAuth = PROTECTED_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))
   if (AUTH_GUARD_ENABLED && needsAuth && !hasSession) {
     const login = new URL('/login', request.url)

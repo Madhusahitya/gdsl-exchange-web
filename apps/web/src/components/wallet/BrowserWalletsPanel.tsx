@@ -10,8 +10,7 @@
  *     sign with, so auto-trading always runs against the personal wallet).
  *  2. Receive withdrawals — the address is prefilled on the withdraw forms.
  *
- * Manual self-custody trading lives on the /dex-jupiter, /dex and
- * /token-trading pages, which sign with the connected wallet.
+ * Manual self-custody trading lives on /dex-jupiter, which signs with the connected wallet.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAccount, useChainId, useConnect, useDisconnect, useSwitchChain } from 'wagmi'

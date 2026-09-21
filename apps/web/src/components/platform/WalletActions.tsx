@@ -30,6 +30,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ConnectWalletModal } from '@/components/web3/ConnectWalletModal'
+import { BinanceConnectDialog } from '@/components/cex/BinanceConnectDialog'
 import { useActiveWallet } from '@/context/ActiveWalletContext'
 import { SolanaWalletPanel } from '@/components/dex/SolanaWalletPanel'
 import { CrossChainTransferPanel } from '@/components/dex/CrossChainTransferPanel'
@@ -74,7 +75,9 @@ export function WalletActions() {
   const { sendTransactionAsync, isPending: sendPending } = useSendTransaction()
 
   const [walletHubOpen, setWalletHubOpen] = useState(false)
+  const [connectChooserOpen, setConnectChooserOpen] = useState(false)
   const [connectOpen, setConnectOpen] = useState(false)
+  const [binanceOpen, setBinanceOpen] = useState(false)
   const [depositOpen, setDepositOpen] = useState(false)
   const [withdrawOpen, setWithdrawOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
@@ -454,7 +457,7 @@ export function WalletActions() {
                   <HubTile
                     label="Connect"
                     accent={showConnected ? 'emerald' : 'amber'}
-                    onClick={() => openFromHub(() => setConnectOpen(true))}
+                    onClick={() => openFromHub(() => setConnectChooserOpen(true))}
                     icon={
                       <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -614,11 +617,69 @@ export function WalletActions() {
         <BscConvertPanel hideTrigger open={convertOpen} onOpenChange={setConvertOpen} />
       )}
 
+      <Dialog open={connectChooserOpen} onOpenChange={setConnectChooserOpen}>
+        <DialogContent className="border-white/10 bg-[#111113] p-0 text-white sm:max-w-sm overflow-hidden">
+          <DialogHeader className="border-b border-white/10 px-5 py-4">
+            <DialogTitle className="text-base font-semibold tracking-tight">Connect</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-1.5 p-3">
+            <button
+              type="button"
+              onClick={() => {
+                setConnectChooserOpen(false)
+                setBinanceOpen(true)
+              }}
+              className="flex w-full items-center justify-between rounded-xl bg-white/[0.06] px-4 py-3 text-left transition hover:bg-white/[0.1]"
+            >
+              <span className="text-sm font-semibold text-white">Binance</span>
+              <span className="text-[11px] text-zinc-500">API</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setConnectChooserOpen(false)
+                void (async () => {
+                  if (isSolanaContext) {
+                    activeSol.setPreference('platform')
+                    await dexJupiter.ensureWallet().catch(() => null)
+                    setSolHubTab('deposit')
+                    setSolHubOpen(true)
+                  } else {
+                    await ensureGdslWallet()
+                    setDepositOpen(true)
+                  }
+                })()
+              }}
+              className="flex w-full items-center justify-between rounded-xl bg-white/[0.06] px-4 py-3 text-left transition hover:bg-white/[0.1]"
+            >
+              <span className="text-sm font-semibold text-white">Personal</span>
+              <span className="font-mono text-[11px] text-zinc-500">
+                {personalAddr ? shortAddr(personalAddr) : 'Create'}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setConnectChooserOpen(false)
+                setConnectOpen(true)
+              }}
+              className="flex w-full items-center justify-between rounded-xl bg-white/[0.06] px-4 py-3 text-left transition hover:bg-white/[0.1]"
+            >
+              <span className="text-sm font-semibold text-white">Browser</span>
+              <span className="text-[11px] text-zinc-500">Phantom · MetaMask</span>
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <BinanceConnectDialog open={binanceOpen} onOpenChange={setBinanceOpen} />
+
       <ConnectWalletModal
         open={connectOpen}
         onOpenChange={setConnectOpen}
         networkLabel={networkLabel}
         personalAddr={personalAddr}
+        browserOnly
         onPersonalWallet={async () => {
           if (isSolanaContext) {
             await dexJupiter.ensureWallet().catch(() => null)
