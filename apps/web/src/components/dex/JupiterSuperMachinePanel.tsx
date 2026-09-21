@@ -114,6 +114,16 @@ function writeCachedEnabled(enabled: boolean): void {
   sessionStorage.setItem(ENABLED_LS, enabled ? 'true' : 'false')
 }
 
+/** Zod on the API requires SYMBOLUSDT. Chart state may be "BTC" or "BTCUSDT". */
+function toWatchSymbol(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const s = raw.toUpperCase().replace(/[^A-Z0-9]/g, '')
+  if (s.length < 2) return null
+  const withUsdt = s.endsWith('USDT') ? s : `${s}USDT`
+  if (withUsdt.length < 6 || withUsdt.length > 32) return null
+  return withUsdt
+}
+
 export function JupiterSuperMachinePanel({
   watchSymbol,
   onPreflightApply,
@@ -143,7 +153,7 @@ export function JupiterSuperMachinePanel({
   const [scanMode, setScanMode] = useState<'pair-lock' | 'auto-scan'>(() => {
     if (typeof window === 'undefined') return 'auto-scan'
     const saved = localStorage.getItem(SCAN_MODE_LS)
-    return saved === 'pair-lock' || saved === 'auto-scan' ? saved : 'auto-scan'
+    return saved === 'pair-lock' || saved === 'auto-scan' ? saved : 'pair-lock'
   })
   const scanModeRef = useRef(scanMode)
   scanModeRef.current = scanMode
@@ -167,14 +177,17 @@ export function JupiterSuperMachinePanel({
 
   const refresh = useCallback(async () => {
     try {
-      const [s, st] = await Promise.all([
-        dexJupiter.superMachineSettings(),
-        dexJupiter.superMachineStatus(),
-      ])
+      // Settings first so the toggle hydrates even if status is slow (it can take 10–20s).
+      const s = await dexJupiter.superMachineSettings()
       setSettings(s)
       writeCachedEnabled(s.enabled)
-      setStatus(st)
       setHydrated(true)
+    } catch {
+      // still allow turning OFF from the cached toggle
+    }
+    try {
+      const st = await dexJupiter.superMachineStatus()
+      setStatus(st)
       if (Array.isArray(st.activity) && st.activity.length > 0) {
         setActivity((prev) => {
           const byId = new Map<string, SuperMachineActivity>()
@@ -268,17 +281,21 @@ export function JupiterSuperMachinePanel({
     // (enabled:false on remount) cannot wipe a running Super Machine.
     const prevEnabled = settings.enabled
     setSettings((cur) => ({ ...cur, ...patch }))
+    if (patch.enabled !== undefined) writeCachedEnabled(Boolean(patch.enabled))
     setSaving(true)
     try {
       const saved = await dexJupiter.saveSuperMachineSettings(patch)
       setSettings(saved)
       writeCachedEnabled(saved.enabled)
+      setHydrated(true)
       if (saved.enabled && !prevEnabled) {
         toast.success('Super Machine activated — agents scanning every 15s')
       } else if (!saved.enabled && prevEnabled) {
         toast.info('Super Machine stopped')
       }
-      await refresh()
+      if (patch.enabled !== undefined) {
+        void refresh()
+      }
     } catch {
       toast.error('Failed to save settings')
       await refresh()
@@ -304,8 +321,8 @@ export function JupiterSuperMachinePanel({
   useEffect(() => {
     if (!hydrated) return
     if (scanMode !== 'pair-lock' || !normalizedWatch) return
-    if (settings.watchSymbol === normalizedWatch) return
-    void save({ watchSymbol: normalizedWatch })
+    if (settings.watchSymbol === toWatchSymbol(normalizedWatch)) return
+    void save({ watchSymbol: toWatchSymbol(normalizedWatch) })
     // Deliberately keyed on the chart selection only: including `save` or
     // `settings` would re-push the pair lock on every settings refresh.
   }, [hydrated, normalizedWatch, scanMode])
@@ -314,7 +331,7 @@ export function JupiterSuperMachinePanel({
     const def = STRATEGIES[key]
     toast.success(`Strategy: ${def.label}`)
     const watch =
-      scanMode === 'pair-lock' ? (normalizedWatch ?? settings.watchSymbol ?? null) : null
+      scanMode === 'pair-lock' ? toWatchSymbol(normalizedWatch ?? settings.watchSymbol) : null
     void save({ ...def.settings, watchSymbol: watch })
   }
 
@@ -362,16 +379,20 @@ export function JupiterSuperMachinePanel({
             type="checkbox"
             className="peer sr-only"
             checked={toggleOn}
-            disabled={settings.emergencyStop || saving || !hydrated}
-            onChange={(e) =>
+            disabled={settings.emergencyStop || saving}
+            onChange={(e) => {
+              const turningOn = e.target.checked
+              if (!turningOn) {
+                // Disable-only payload — never hitch watchSymbol, which can 400 the whole PUT.
+                void save({ enabled: false })
+                return
+              }
+              const lock = scanMode === 'pair-lock' ? toWatchSymbol(normalizedWatch ?? settings.watchSymbol) : null
               void save({
-                enabled: e.target.checked,
-                watchSymbol:
-                  scanMode === 'pair-lock'
-                    ? (normalizedWatch ?? settings.watchSymbol ?? null)
-                    : null,
+                enabled: true,
+                watchSymbol: lock,
               })
-            }
+            }}
           />
           <div className="peer h-5 w-9 rounded-full bg-zinc-700 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all after:content-[''] peer-checked:bg-violet-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none"></div>
         </label>
@@ -387,7 +408,7 @@ export function JupiterSuperMachinePanel({
             disabled={saving}
             onClick={() => {
               setScanMode('pair-lock')
-              void save({ watchSymbol: normalizedWatch ?? settings.watchSymbol ?? null })
+              void save({ watchSymbol: toWatchSymbol(normalizedWatch ?? settings.watchSymbol) })
             }}
             className={cn(
               'rounded border px-2 py-1.5 text-[9px] font-medium leading-tight transition-colors',

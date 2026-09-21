@@ -1256,11 +1256,9 @@ export default function DashboardPage() {
                   const skimBlocked: string | null = cexMatch
                     ? (cexOpenPos?.skimBlockedReason ?? null)
                     : isJupiter
-                      ? jup && !jup.inProfit
+                      ? posUnrealizedPnlUsd <= 0
                         ? 'Not in profit yet'
-                        : livePnlUsd <= 0
-                          ? 'Not in profit yet'
-                          : null
+                        : null
                       : livePnlUsd <= 0
                         ? 'Not in profit yet'
                         : null
@@ -1284,11 +1282,11 @@ export default function DashboardPage() {
                         </td>
                         <td className="px-4 py-3 text-zinc-300">{fmtQty(pos.quantity)}</td>
                         <td className="px-4 py-3 text-zinc-300">
-                          {pos.avgEntryPrice != null ? `$${fmt(pos.avgEntryPrice)}` : '—'}
+                          {pos.avgEntryPrice != null ? fmtExecPx(pos.avgEntryPrice) : '—'}
                         </td>
                         <td className="px-4 py-3 text-zinc-300">
                           {posMark != null ? (
-                            <LiveNumber value={posMark}>${fmt(posMark)}</LiveNumber>
+                            <LiveNumber value={posMark}>{fmtExecPx(posMark)}</LiveNumber>
                           ) : (
                             '—'
                           )}
