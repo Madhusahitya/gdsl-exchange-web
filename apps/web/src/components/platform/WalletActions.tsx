@@ -19,6 +19,7 @@ import { bsc } from 'wagmi/chains'
 import { erc20Abi, parseEther, parseUnits, type Address } from 'viem'
 import { toast } from 'sonner'
 import { tryNormalizeEvmAddress } from '@/lib/evmAddress'
+import { connectSocket } from '@/lib/socket'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -132,13 +133,15 @@ export function WalletActions() {
     let cancelled = false
     const loadSol = async () => {
       try {
-        const status = await dexJupiter.walletStatus()
-        if (cancelled) return
-        if (status.wallet?.address) {
-          setSolAddress(status.wallet.address)
-        } else if (status.configured) {
-          const created = await dexJupiter.ensureWallet()
-          if (!cancelled) setSolAddress(created.address)
+        if (!solAddress) {
+          const status = await dexJupiter.walletStatus()
+          if (cancelled) return
+          if (status.wallet?.address) {
+            setSolAddress(status.wallet.address)
+          } else if (status.configured) {
+            const created = await dexJupiter.ensureWallet()
+            if (!cancelled) setSolAddress(created.address)
+          }
         }
         // The pill must report the wallet that will actually pay for trades.
         if (solBrowserAddress) {
@@ -155,13 +158,16 @@ export function WalletActions() {
     // Switching wallets must not leave the previous wallet's number on screen.
     setSolUsdc(null)
     void loadSol()
-    const id = window.setInterval(() => void loadSol(), 30_000)
     const onRefresh = () => void loadSol()
     window.addEventListener('dashboard:refresh', onRefresh)
+    const socket = connectSocket()
+    socket.on('trade:executed', onRefresh)
+    socket.on('portfolio:update', onRefresh)
     return () => {
       cancelled = true
-      window.clearInterval(id)
       window.removeEventListener('dashboard:refresh', onRefresh)
+      socket.off('trade:executed', onRefresh)
+      socket.off('portfolio:update', onRefresh)
     }
   }, [isSolanaContext, solBrowserAddress])
 

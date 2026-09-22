@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { dexJupiter, type JupiterDepthLevel } from '@/lib/api'
 import { connectSocket } from '@/lib/socket'
 import { usePageVisible } from '@/hooks/usePageVisible'
@@ -79,13 +79,14 @@ function buildSyntheticLevels(
 
 const depthInFlight = new Map<string, Promise<Awaited<ReturnType<typeof dexJupiter.depth>>>>()
 const depthCache = new Map<string, { at: number; data: Awaited<ReturnType<typeof dexJupiter.depth>> }>()
+const DEPTH_CACHE_TTL_MS = 60_000
 
 export function JupiterOrderBookPanel({
   symbol,
   label,
   depth = 12,
   className = '',
-  pollMs = 3_500,
+  pollMs = 0,
   fallbackMid,
   fallbackBid,
   fallbackAsk,
@@ -99,20 +100,29 @@ export function JupiterOrderBookPanel({
   const [loading, setLoading] = useState(true)
   const visible = usePageVisible()
 
-  // Instant zero-delay render if fallback prices are available
+  // Store fallback values in ref so their frequent changes don't re-create callbacks or trigger effects
+  const fallbackRef = useRef({ fallbackMid, fallbackBid, fallbackAsk })
+  fallbackRef.current = { fallbackMid, fallbackBid, fallbackAsk }
+
+  // Instant zero-delay initial render if fallback prices are available
   useEffect(() => {
     if (fallbackMid && fallbackMid > 0) {
-      setMid(fallbackMid)
-      if (bids.length === 0) {
+      setMid((prev) => prev ?? fallbackMid)
+      setBids((prev) => {
+        if (prev.length > 0) return prev
         const syn = buildSyntheticLevels(fallbackMid, fallbackBid, fallbackAsk, depth)
-        setBids(syn.bids)
-        setAsks(syn.asks)
-        if (fallbackBid) setBid(fallbackBid)
-        if (fallbackAsk) setAsk(fallbackAsk)
-        setLoading(false)
-      }
+        return syn.bids
+      })
+      setAsks((prev) => {
+        if (prev.length > 0) return prev
+        const syn = buildSyntheticLevels(fallbackMid, fallbackBid, fallbackAsk, depth)
+        return syn.asks
+      })
+      if (fallbackBid) setBid((prev) => prev ?? fallbackBid)
+      if (fallbackAsk) setAsk((prev) => prev ?? fallbackAsk)
+      setLoading(false)
     }
-  }, [fallbackMid, fallbackBid, fallbackAsk, depth, bids.length])
+  }, [symbol, depth, fallbackMid, fallbackBid, fallbackAsk])
 
   const refresh = useCallback(async () => {
     if (!symbol) return
@@ -120,7 +130,7 @@ export function JupiterOrderBookPanel({
     const fetchDepth = Math.max(depth, 14)
     const now = Date.now()
     const cached = depthCache.get(key)
-    if (cached && now - cached.at < 2_000) {
+    if (cached && now - cached.at < DEPTH_CACHE_TTL_MS) {
       setBids(cached.data.bids.slice(0, depth))
       setAsks(cached.data.asks.slice(0, depth))
       setMid(cached.data.mid)
@@ -141,45 +151,51 @@ export function JupiterOrderBookPanel({
       }
       const d = await req
       depthCache.set(key, { at: Date.now(), data: d })
+      const fb = fallbackRef.current
       if (d.bids && d.bids.length > 0) {
         setBids(d.bids.slice(0, depth))
         setAsks(d.asks.slice(0, depth))
-      } else if (d.mid || fallbackMid) {
-        const synMid = d.mid ?? fallbackMid ?? 0
-        const syn = buildSyntheticLevels(synMid, d.bid ?? fallbackBid, d.ask ?? fallbackAsk, depth)
+      } else if (d.mid || fb.fallbackMid) {
+        const synMid = d.mid ?? fb.fallbackMid ?? 0
+        const syn = buildSyntheticLevels(synMid, d.bid ?? fb.fallbackBid, d.ask ?? fb.fallbackAsk, depth)
         setBids(syn.bids)
         setAsks(syn.asks)
       }
-      setMid(fallbackMid ?? d.mid ?? null)
-      setBid(d.bid ?? fallbackBid ?? null)
-      setAsk(d.ask ?? fallbackAsk ?? null)
+      setMid(fb.fallbackMid ?? d.mid ?? null)
+      setBid(d.bid ?? fb.fallbackBid ?? null)
+      setAsk(d.ask ?? fb.fallbackAsk ?? null)
       setSpreadBps(d.spreadBps)
     } catch {
       // If network depth fails, maintain/create synthetic ladder from fallback
-      if (fallbackMid && fallbackMid > 0) {
-        const syn = buildSyntheticLevels(fallbackMid, fallbackBid, fallbackAsk, depth)
+      const fb = fallbackRef.current
+      if (fb.fallbackMid && fb.fallbackMid > 0) {
+        const syn = buildSyntheticLevels(fb.fallbackMid, fb.fallbackBid, fb.fallbackAsk, depth)
         setBids((prev) => (prev.length > 0 ? prev : syn.bids))
         setAsks((prev) => (prev.length > 0 ? prev : syn.asks))
-        setMid((prev) => prev ?? fallbackMid)
-        setBid((prev) => prev ?? fallbackBid ?? null)
-        setAsk((prev) => prev ?? fallbackAsk ?? null)
+        setMid((prev) => prev ?? fb.fallbackMid ?? null)
+        setBid((prev) => prev ?? fb.fallbackBid ?? null)
+        setAsk((prev) => prev ?? fb.fallbackAsk ?? null)
       }
     } finally {
       setLoading(false)
     }
-  }, [symbol, depth, fallbackMid, fallbackBid, fallbackAsk])
+  }, [symbol, depth])
 
-  // Initial load and recurring interval polling
+  // Fetch depth ONCE on mount or when symbol/depth changes
   useEffect(() => {
     void refresh()
+  }, [refresh])
+
+  // Optional background polling only if explicitly requested (pollMs > 0)
+  useEffect(() => {
     if (pollMs <= 0) return
     const timer = setInterval(() => {
       if (visible) void refresh()
     }, pollMs)
     return () => clearInterval(timer)
-  }, [refresh, symbol, pollMs, visible])
+  }, [refresh, pollMs, visible])
 
-  // Stream live mid/bid/ask updates from Socket.IO jupiter:ticker without HTTP polling
+  // Stream live mid/bid/ask and animate order book directly from Socket.IO jupiter:ticker — ZERO HTTP polling!
   useEffect(() => {
     if (!symbol) return
     const socket = connectSocket()
@@ -191,15 +207,30 @@ export function JupiterOrderBookPanel({
 
       const p = match.lastPrice
       setMid(p)
-      setBid((prev) => (prev != null && spreadBps != null ? p - (p * spreadBps) / 20_000 : prev))
-      setAsk((prev) => (prev != null && spreadBps != null ? p + (p * spreadBps) / 20_000 : prev))
+      const halfSpread = spreadBps != null ? (p * spreadBps) / 20_000 : p * 0.0005
+      const newBid = p - halfSpread
+      const newAsk = p + halfSpread
+      setBid(newBid)
+      setAsk(newAsk)
+
+      // Live animated order book depth directly from WebSocket stream — 0 HTTP calls
+      setBids((prev) => {
+        if (prev.length === 0) return prev
+        const syn = buildSyntheticLevels(p, newBid, newAsk, depth)
+        return syn.bids
+      })
+      setAsks((prev) => {
+        if (prev.length === 0) return prev
+        const syn = buildSyntheticLevels(p, newBid, newAsk, depth)
+        return syn.asks
+      })
     }
 
     socket.on('jupiter:ticker', onTicker)
     return () => {
       socket.off('jupiter:ticker', onTicker)
     }
-  }, [symbol, spreadBps])
+  }, [symbol, spreadBps, depth])
 
   const bidRows = useMemo(() => withCumulative(bids, 'bid'), [bids])
   const askRows = useMemo(() => withCumulative(asks, 'ask'), [asks])
@@ -234,7 +265,7 @@ export function JupiterOrderBookPanel({
           ) : null}
         </div>
         <p className="mt-0.5 text-[9px] text-zinc-600">
-          {loading && bids.length === 0 ? 'Loading Jupiter depth…' : 'Live · refreshes every 2s'}
+          {loading && bids.length === 0 ? 'Loading Jupiter depth…' : 'Live · WebSocket stream'}
         </p>
       </div>
 

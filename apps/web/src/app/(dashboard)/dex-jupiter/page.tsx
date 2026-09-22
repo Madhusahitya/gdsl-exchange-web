@@ -427,10 +427,22 @@ function DexJupiterContent() {
     return () => window.clearTimeout(t)
   }, [selected, side, amount, slippageBps, tradable, payWith.mint])
 
-  const loadPositions = useCallback(async () => {
+  const positionsInFlightRef = useRef<Promise<unknown> | null>(null)
+  const lastPositionsFetchRef = useRef(0)
+
+  const loadPositions = useCallback(async (force = false) => {
+    const now = Date.now()
+    if (!force && now - lastPositionsFetchRef.current < 5_000) return
+    if (positionsInFlightRef.current) return positionsInFlightRef.current
+
     try {
       setPositionsLoading(true)
-      const res = await dexJupiter.positions()
+      const p = dexJupiter.positions().finally(() => {
+        positionsInFlightRef.current = null
+      })
+      positionsInFlightRef.current = p
+      const res = await p
+      lastPositionsFetchRef.current = Date.now()
       setPositions(res.positions)
       setPositionsTotalPnl(res.totalNetPnlUsd)
       setPositionsBankedSkim(res.totalBankedSkimUsd ?? 0)
@@ -441,14 +453,21 @@ function DexJupiterContent() {
     }
   }, [])
 
-  useEffect(() => {
-    if (!pageVisible || pageMode !== 'trade') return
-    void loadPositions()
-  }, [loadPositions, pageVisible, pageMode])
+  const limitOrdersInFlightRef = useRef<Promise<unknown> | null>(null)
+  const lastLimitOrdersFetchRef = useRef(0)
 
-  const loadLimitOrders = useCallback(async () => {
+  const loadLimitOrders = useCallback(async (force = false) => {
+    const now = Date.now()
+    if (!force && now - lastLimitOrdersFetchRef.current < 5_000) return
+    if (limitOrdersInFlightRef.current) return limitOrdersInFlightRef.current
+
     try {
-      const res = await dexJupiter.limitOrders()
+      const p = dexJupiter.limitOrders().finally(() => {
+        limitOrdersInFlightRef.current = null
+      })
+      limitOrdersInFlightRef.current = p
+      const res = await p
+      lastLimitOrdersFetchRef.current = Date.now()
       setLimitOrders(res.orders)
     } catch {
       /* keep last */
@@ -456,9 +475,10 @@ function DexJupiterContent() {
   }, [])
 
   useEffect(() => {
-    if (!pageVisible || pageMode !== 'trade') return
+    if (pageMode !== 'trade') return
+    void loadPositions()
     void loadLimitOrders()
-  }, [loadLimitOrders, pageVisible, pageMode])
+  }, [loadPositions, loadLimitOrders, pageMode])
 
   // Real-time position and limit order updates driven by server events
   useEffect(() => {
@@ -851,7 +871,7 @@ function DexJupiterContent() {
               label={selected ? pairLabel(selected) : 'SOL/USDT'}
               depth={14}
               className="h-full min-h-[420px]"
-              pollMs={3_500}
+              pollMs={0}
               fallbackMid={jupiterMid}
               fallbackBid={orderBookBid}
               fallbackAsk={orderBookAsk}
@@ -897,7 +917,7 @@ function DexJupiterContent() {
             label={selected ? pairLabel(selected) : 'SOL/USDT'}
             depth={12}
             className="max-h-[320px]"
-            pollMs={3_500}
+            pollMs={0}
             fallbackMid={jupiterMid}
             fallbackBid={orderBookBid}
             fallbackAsk={orderBookAsk}
