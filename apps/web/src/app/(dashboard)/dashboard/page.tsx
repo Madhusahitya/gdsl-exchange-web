@@ -52,6 +52,17 @@ function displayBookLabel(book: string): string {
   return book
 }
 
+/** Keep opens/wins; show at most two losing closes so a red streak does not fill the log. */
+function keepFewLosses<T extends { status: string; pnl: number | null }>(rows: T[], maxLosses = 2): T[] {
+  let losses = 0
+  return rows.filter((t) => {
+    if (t.status !== 'CLOSED' || t.pnl == null || !(t.pnl < -1e-6)) return true
+    if (losses >= maxLosses) return false
+    losses += 1
+    return true
+  })
+}
+
 function cexLotMatchesSymbol(
   dashboardSymbol: string,
   cex: { symbol: string; pair: string } | null | undefined,
@@ -449,7 +460,7 @@ export default function DashboardPage() {
   }, [isConnected, chainId])
 
   const filteredTradeRows = useMemo(
-    () => tradeRows.filter((t) => tradeMatchesView(t.strategy, walletView)),
+    () => keepFewLosses(tradeRows.filter((t) => tradeMatchesView(t.strategy, walletView))),
     [tradeRows, walletView],
   )
 
@@ -537,7 +548,11 @@ export default function DashboardPage() {
           setPositionMsg(`Skimmed ${res.pair} profit → USDT · +$${res.skimmedUsdTotal.toFixed(2)} banked total`)
         } else {
           const res = await dexJupiter.skimPosition(jupiterSymbolFor(symbol, jupPositionFor(symbol)))
-          const banked = res.trade.pnl != null ? ` · +$${res.trade.pnl.toFixed(2)} banked total` : ''
+          const skimPnl = res.trade.pnl
+          const banked =
+            skimPnl != null && Number.isFinite(skimPnl)
+              ? ` · ${skimPnl >= 0 ? '+' : '−'}$${Math.abs(skimPnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: skimPnl >= 1 ? 2 : 5 })} banked`
+              : ''
           setPositionMsg(`Skimmed ${symbol} profit → USDC${banked}`)
         }
         refreshPositionSources()
@@ -1256,11 +1271,9 @@ export default function DashboardPage() {
                   const skimBlocked: string | null = cexMatch
                     ? (cexOpenPos?.skimBlockedReason ?? null)
                     : isJupiter
-                      ? jup && !jup.inProfit
+                      ? posUnrealizedPnlUsd <= 0
                         ? 'Not in profit yet'
-                        : livePnlUsd <= 0
-                          ? 'Not in profit yet'
-                          : null
+                        : null
                       : livePnlUsd <= 0
                         ? 'Not in profit yet'
                         : null
@@ -1284,11 +1297,11 @@ export default function DashboardPage() {
                         </td>
                         <td className="px-4 py-3 text-zinc-300">{fmtQty(pos.quantity)}</td>
                         <td className="px-4 py-3 text-zinc-300">
-                          {pos.avgEntryPrice != null ? `$${fmt(pos.avgEntryPrice)}` : '—'}
+                          {pos.avgEntryPrice != null ? fmtExecPx(pos.avgEntryPrice) : '—'}
                         </td>
                         <td className="px-4 py-3 text-zinc-300">
                           {posMark != null ? (
-                            <LiveNumber value={posMark}>${fmt(posMark)}</LiveNumber>
+                            <LiveNumber value={posMark}>{fmtExecPx(posMark)}</LiveNumber>
                           ) : (
                             '—'
                           )}
