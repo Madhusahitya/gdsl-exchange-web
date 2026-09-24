@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { dexJupiter, type CouncilStatus, type JupiterSuperMachineStatus } from '@/lib/api'
+import { dexJupiter, type CouncilStatus } from '@/lib/api'
 
 import { connectSocket } from '@/lib/socket'
 
@@ -12,31 +12,36 @@ type Props = {
 
 export function JupiterCouncilStrip({ watchSymbol }: Props) {
   const [council, setCouncil] = useState<CouncilStatus | null>(null)
-  const [sm, setSm] = useState<JupiterSuperMachineStatus | null>(null)
+  const [sm, setSm] = useState<{ enabled: boolean; watchSymbol: string | null } | null>(null)
 
   useEffect(() => {
-    const load = () => {
-      void dexJupiter.councilStatus().then(setCouncil).catch(() => null)
-      void dexJupiter.superMachineStatus().then(setSm).catch(() => null)
-    }
-    load()
+    // Single initial load on mount
+    void dexJupiter.councilStatus().then(setCouncil).catch(() => null)
+    void dexJupiter.superMachineSettings().then((s) => {
+      setSm({ enabled: s.enabled, watchSymbol: s.watchSymbol ?? null })
+    }).catch(() => null)
 
     const socket = connectSocket()
     const onCouncil = () => void dexJupiter.councilStatus().then(setCouncil).catch(() => null)
-    const onActivity = () => void dexJupiter.superMachineStatus().then(setSm).catch(() => null)
+    const onSettings = (next: { enabled?: boolean; watchSymbol?: string | null }) => {
+      setSm({
+        enabled: Boolean(next.enabled),
+        watchSymbol: next.watchSymbol ?? null,
+      })
+    }
 
     socket.on('council:decision', onCouncil)
-    socket.on('super-machine:activity', onActivity)
+    socket.on('super-machine:settings', onSettings)
 
     return () => {
       socket.off('council:decision', onCouncil)
-      socket.off('super-machine:activity', onActivity)
+      socket.off('super-machine:settings', onSettings)
     }
   }, [])
 
   const last = council?.lastDecision
-  const smOn = sm?.settings.enabled ?? false
-  const smWatch = sm?.settings.watchSymbol ?? null
+  const smOn = sm?.enabled ?? false
+  const smWatch = sm?.watchSymbol ?? null
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-[10px]">

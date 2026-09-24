@@ -175,9 +175,11 @@ export function JupiterSuperMachinePanel({
 
   const socket = useSocket()
 
-  const refresh = useCallback(async () => {
+  const statusInFlightRef = useRef(false)
+  const lastStatusAtRef = useRef(0)
+
+  const loadSettings = useCallback(async () => {
     try {
-      // Settings first so the toggle hydrates even if status is slow (it can take 10–20s).
       const s = await dexJupiter.superMachineSettings()
       setSettings(s)
       writeCachedEnabled(s.enabled)
@@ -185,8 +187,15 @@ export function JupiterSuperMachinePanel({
     } catch {
       // still allow turning OFF from the cached toggle
     }
+  }, [])
+
+  const loadStatus = useCallback(async () => {
+    const now = Date.now()
+    if (statusInFlightRef.current || now - lastStatusAtRef.current < 4000) return
+    statusInFlightRef.current = true
     try {
       const st = await dexJupiter.superMachineStatus()
+      lastStatusAtRef.current = Date.now()
       setStatus(st)
       if (Array.isArray(st.activity) && st.activity.length > 0) {
         setActivity((prev) => {
@@ -199,19 +208,27 @@ export function JupiterSuperMachinePanel({
         })
       }
     } catch {
-      // transient — keep cached toggle + schedule one fast retry on remount
+      // transient
+    } finally {
+      statusInFlightRef.current = false
     }
   }, [])
 
   useEffect(() => {
-    void refresh()
-    const retry = window.setTimeout(() => void refresh(), 1500)
-    const id = setInterval(() => void refresh(), 12_000)
+    void loadSettings()
+    void loadStatus()
+
+    // Settings never need polling (WebSocket pushes 'super-machine:settings').
+    // Only reconcile status every 60s if bot is enabled and page is in focus.
+    const id = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && settings.enabled) {
+        void loadStatus()
+      }
+    }, 60_000)
     return () => {
-      window.clearTimeout(retry)
       clearInterval(id)
     }
-  }, [refresh])
+  }, [loadSettings, loadStatus, settings.enabled])
 
   // Real-time: push agent activity straight into the terminal via Socket.IO.
   useEffect(() => {
@@ -235,6 +252,11 @@ export function JupiterSuperMachinePanel({
       writeCachedEnabled(next.enabled)
       setHydrated(true)
     }
+    const onTick = (tickData: { stats?: JupiterSuperMachineStatus['stats'] }) => {
+      if (tickData?.stats) {
+        setStatus((prev) => (prev ? { ...prev, stats: tickData.stats! } : prev))
+      }
+    }
     const onPreflight = async ({ steps }: { steps: PreflightStep[] }) => {
       setPreflightRunning(true)
       pulseAgentCursor()
@@ -257,18 +279,20 @@ export function JupiterSuperMachinePanel({
       setPreflightRunning(false)
       setAgentField(null)
       setAgentLabel(null)
-      void refresh()
+      void loadStatus()
     }
     socket.on('super-machine:activity', onActivity)
     socket.on('super-machine:settings', onSettings)
     socket.on('super-machine:preflight', onPreflight)
+    socket.on('super-machine:tick', onTick)
     return () => {
       socket.off('super-machine:activity', onActivity)
       socket.off('super-machine:settings', onSettings)
       socket.off('super-machine:preflight', onPreflight)
+      socket.off('super-machine:tick', onTick)
       if (cursorTimerRef.current) clearTimeout(cursorTimerRef.current)
     }
-  }, [socket, refresh, onPreflightApply, pulseAgentCursor])
+  }, [socket, loadStatus, onPreflightApply, pulseAgentCursor])
 
   useEffect(() => {
     if (!settings.enabled) setAgentCursor((c) => ({ ...c, visible: false }))
@@ -294,11 +318,12 @@ export function JupiterSuperMachinePanel({
         toast.info('Super Machine stopped')
       }
       if (patch.enabled !== undefined) {
-        void refresh()
+        void loadStatus()
       }
     } catch {
       toast.error('Failed to save settings')
-      await refresh()
+      void loadSettings()
+      void loadStatus()
     } finally {
       setSaving(false)
     }
