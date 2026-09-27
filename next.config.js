@@ -8,7 +8,6 @@ const apiInternal = process.env.API_INTERNAL_ORIGIN || 'http://127.0.0.1:8000'
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  transpilePackages: ['@cryptoflow/dex-pancake'],
   experimental: {
     optimizePackageImports: [
       'lucide-react',

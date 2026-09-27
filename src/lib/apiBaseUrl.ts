@@ -11,14 +11,14 @@ export function getApiBaseUrl(): string {
     return ''
   }
   try {
+    if (fallback.startsWith('http') && !fallback.includes('localhost') && !fallback.includes('127.0.0.1')) {
+      return fallback
+    }
     const u = new URL(fallback)
     const port = u.port || '8000'
     const h = window.location.hostname
     if (h === 'localhost' || h === '127.0.0.1') {
       return `${window.location.protocol}//${h}:${port}`
-    }
-    if (fallback.startsWith('http') && !fallback.includes('localhost')) {
-      return fallback
     }
   } catch {
     /* ignore */
@@ -35,22 +35,25 @@ export function getApiOriginForErrors(): string {
   return `${window.location.origin} (same origin; /api proxied to backend)`
 }
 
-/** Socket.IO expects http(s) URL; keep host aligned with getApiBaseUrl */
 export function getSocketUrl(): string {
+  const wsUrl = process.env.NEXT_PUBLIC_WS_URL
+  if (wsUrl && !wsUrl.includes('localhost') && !wsUrl.includes('127.0.0.1')) {
+    return wsUrl
+  }
   const fallback = process.env.NEXT_PUBLIC_WS_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
   if (typeof window === 'undefined') return fallback
   if (process.env.NEXT_PUBLIC_USE_API_PROXY === '1') {
     return `${window.location.protocol}//${window.location.host}`
   }
   try {
+    if ((fallback.startsWith('http') || fallback.startsWith('ws')) && !fallback.includes('localhost') && !fallback.includes('127.0.0.1')) {
+      return fallback
+    }
     const u = new URL(fallback)
     const port = u.port || '8000'
     const h = window.location.hostname
     if (h === 'localhost' || h === '127.0.0.1') {
       return `${u.protocol}//${h}:${port}`
-    }
-    if (fallback.startsWith('http') && !fallback.includes('localhost')) {
-      return fallback
     }
   } catch {
     /* ignore */

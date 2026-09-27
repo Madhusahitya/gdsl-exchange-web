@@ -29,6 +29,10 @@ function hasReadableSessionHint(): boolean {
 api.interceptors.request.use((config) => {
   if (typeof window !== 'undefined') {
     config.baseURL = getApiBaseUrl()
+    const token = localStorage.getItem('cf_token')
+    if (token) {
+      config.headers['Authorization'] = `Bearer ${token}`
+    }
   }
   const method = String(config.method ?? 'get').toUpperCase()
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
@@ -50,7 +54,7 @@ function doRefreshOnce(): Promise<void> {
   if (refreshInFlight) return refreshInFlight
   refreshInFlight = (async () => {
     try {
-      await axios.post(
+      const refreshRes = await axios.post(
         `${getApiBaseUrl()}/api/auth/refresh`,
         {},
         {
@@ -58,6 +62,9 @@ function doRefreshOnce(): Promise<void> {
           headers: { 'x-csrf-token': getCookie('cf_csrf') || '' },
         },
       )
+      if (refreshRes.data?.token && typeof window !== 'undefined') {
+        localStorage.setItem('cf_token', refreshRes.data.token)
+      }
     } finally {
       // Allow a new refresh after the current cycle completes (success OR
       // failure — successive 401s after a hard logout get their own attempt).
@@ -196,6 +203,9 @@ export const auth = {
    */
   login: async (identifier: string, password: string) => {
     const response = await api.post('/api/auth/login', { identifier, password })
+    if (response.data?.token && typeof window !== 'undefined') {
+      localStorage.setItem('cf_token', response.data.token)
+    }
     invalidateAuthMeCache()
     return response.data
   },
@@ -211,6 +221,9 @@ export const auth = {
   },
   verifyEmail: async (email: string, code: string) => {
     const response = await api.post('/api/auth/verify-email', { email, code })
+    if (response.data?.token && typeof window !== 'undefined') {
+      localStorage.setItem('cf_token', response.data.token)
+    }
     invalidateAuthMeCache()
     return response.data
   },
@@ -219,6 +232,9 @@ export const auth = {
     return response.data
   },
   logout: async () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('cf_token')
+    }
     const response = await api.post('/api/auth/logout', {})
     invalidateAuthMeCache()
     return response.data
