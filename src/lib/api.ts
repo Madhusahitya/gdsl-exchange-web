@@ -64,6 +64,8 @@ function doRefreshOnce(): Promise<void> {
       )
       if (refreshRes.data?.token && typeof window !== 'undefined') {
         localStorage.setItem('cf_token', refreshRes.data.token)
+        const isHttps = window.location.protocol === 'https:'
+        document.cookie = `cf_token=${refreshRes.data.token}; path=/; max-age=86400; SameSite=Lax${isHttps ? '; Secure' : ''}`
       }
     } finally {
       // Allow a new refresh after the current cycle completes (success OR
@@ -205,6 +207,8 @@ export const auth = {
     const response = await api.post('/api/auth/login', { identifier, password })
     if (response.data?.token && typeof window !== 'undefined') {
       localStorage.setItem('cf_token', response.data.token)
+      const isHttps = window.location.protocol === 'https:'
+      document.cookie = `cf_token=${response.data.token}; path=/; max-age=86400; SameSite=Lax${isHttps ? '; Secure' : ''}`
     }
     invalidateAuthMeCache()
     return response.data
@@ -223,6 +227,8 @@ export const auth = {
     const response = await api.post('/api/auth/verify-email', { email, code })
     if (response.data?.token && typeof window !== 'undefined') {
       localStorage.setItem('cf_token', response.data.token)
+      const isHttps = window.location.protocol === 'https:'
+      document.cookie = `cf_token=${response.data.token}; path=/; max-age=86400; SameSite=Lax${isHttps ? '; Secure' : ''}`
     }
     invalidateAuthMeCache()
     return response.data
@@ -234,6 +240,7 @@ export const auth = {
   logout: async () => {
     if (typeof window !== 'undefined') {
       localStorage.removeItem('cf_token')
+      document.cookie = 'cf_token=; path=/; max-age=0'
     }
     const response = await api.post('/api/auth/logout', {})
     invalidateAuthMeCache()

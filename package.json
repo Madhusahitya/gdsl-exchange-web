@@ -4,9 +4,9 @@
   "private": true,
   "description": "Godslandx / koie.fin trading frontend — Next.js",
   "scripts": {
-    "dev": "next dev -H 0.0.0.0 -p 8003",
-    "dev:turbo": "next dev --turbo -H 0.0.0.0 -p 8003",
-    "dev:clean": "node -e \"const fs=require('fs'); fs.rmSync('.next',{recursive:true,force:true});\" && next dev -H 0.0.0.0 -p 8003",
+    "dev": "next dev -p 3000",
+    "dev:turbo": "next dev --turbo -p 3000",
+    "dev:clean": "node -e \"const fs=require('fs'); fs.rmSync('.next',{recursive:true,force:true});\" && next dev -p 3000",
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 8003",
     "lint": "next lint",

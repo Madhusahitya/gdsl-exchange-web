@@ -1,64 +1,84 @@
-# Frontend handoff
+# Frontend Engineer Handoff Guide
 
-Hey — this is the web repo. Don't clone `gdsl-exchange` for frontend work; that's the deploy/orchestration repo now.
+Welcome to the standalone Next.js frontend repository for **koie.fin / Godslandx** (`gdsl-exchange-web`).
 
-Backend API is separate: [gdsl-exchange-api](https://github.com/Madhusahitya/gdsl-exchange-api).
+- **Live Staging Domain**: `https://staging.eizy.trade`
+- **Backend API Repository**: [gdsl-exchange-api](https://github.com/Madhusahitya/gdsl-exchange-api) (`https://staging-api.eizy.trade`)
+- **Operations & Deployment Guide**: See [OPERATIONS_AND_DEPLOYMENT_GUIDE.md](OPERATIONS_AND_DEPLOYMENT_GUIDE.md)
 
-## Get running locally
+---
+
+## 1. Quick Start for Local Development
 
 ```bash
-git clone git@github.com:Madhusahitya/gdsl-exchange-web.git
-cd gdsl-exchange-web
-cp apps/web/.env.example apps/web/.env.local
+# 1. Install dependencies
 npm install
+
+# 2. Start development server
 npm run dev
 ```
 
-Open **http://localhost:8003**
-
-### Ports (don't mix these up)
-
-| What | Port |
-|------|------|
-| **Web app (this repo, local dev)** | **8003** |
-| **API (local dev)** | **8000** — run from gdsl-exchange-api |
-| **API (production / Docker on droplet)** | **4000** |
-| **Web (production Docker on droplet)** | **3000** (nginx serves trade.godslandx.com) |
-
-Set `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_WS_URL` to `http://localhost:8000` / `ws://localhost:8000` when running the API locally.
-
-For UI-only work, ask me for a staging API URL instead of running the backend yourself.
-
-### WalletConnect
-
-You need `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` from [WalletConnect Cloud](https://cloud.walletconnect.com/) for BSC wallet UI. Put it in `apps/web/.env.local`.
+Open **http://localhost:3000** in your browser.
 
 ---
 
-## Where the code is
+## 2. Port Architecture (Do Not Mix These Up)
+
+| Service | Local Port | Production / Live Staging |
+|:---|:---|:---|
+| **Web Frontend** | `3000` (`http://localhost:3000`) | `https://staging.eizy.trade` (K8s pod via `hostPort: 3001`) |
+| **Backend REST API** | `8000` (`http://localhost:8000`) | `https://staging-api.eizy.trade` |
+| **WebSocket Gateway** | `8000` or `8001` (`ws://localhost:8000`) | `wss://staging-socket.eizy.trade` |
+
+---
+
+## 3. Environment Variables ([.env](file:///d:/faiz-p/gdsl-exchange-web/.env))
+
+### Local Development against Live Staging Backend:
+```env
+NEXT_PUBLIC_USE_API_PROXY=0
+NEXT_PUBLIC_API_URL=https://staging-api.eizy.trade
+NEXT_PUBLIC_WS_URL=wss://staging-socket.eizy.trade
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
+
+### Local Development against Local Backend API:
+```env
+NEXT_PUBLIC_USE_API_PROXY=0
+NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_WS_URL=ws://localhost:8000
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
+
+---
+
+## 4. Codebase Directory Structure
 
 | Path | Purpose |
-|------|---------|
-| `apps/web/src/app/` | Next.js App Router pages |
-| `apps/web/src/components/` | UI components |
-| `apps/web/src/lib/api.ts` | API client |
-| `apps/web/src/hooks/useSocket.ts` | Socket.IO hook |
-| `packages/dex-pancake/` | Shared BSC/Pancake ABIs (small package) |
-
-Main dashboard routes live under `apps/web/src/app/(dashboard)/`.
-
----
-
-## Deploy
-
-Push to `main` → CI runs here → triggers `gdsl-exchange` to build the Docker image → deploys to the droplet.
-
-Image: `ghcr.io/madhusahitya/gdsl-exchange-web:latest`
-
-**Do not push directly to production configs.** Open PRs; CI must pass.
+|:---|:---|
+| `src/app/` | Next.js 14 App Router pages (`(auth)`, `(dashboard)`, etc.) |
+| `src/app/(dashboard)/dex/` | Primary BSC PancakeSwap / DEX trading terminal |
+| `src/components/` | Reusable React UI components |
+| `src/lib/api.ts` | Central Axios API client with automatic token refresh and cookies |
+| `src/lib/dex/` | BSC token definitions, ABIs, swap routing, and calculators |
+| `src/middleware.ts` | Next.js Edge route guard protecting dashboard routes |
+| `docker/web.Dockerfile` | Multi-stage production container build |
 
 ---
 
-## Staging subdomain (coming)
+## 5. Deployment Flow
 
-We're setting up something like `staging.trade.godslandx.com` so you can preview changes without touching the live site. Ping me when you need access — don't deploy experimental stuff to the main domain.
+1. **Build & Push Docker Image**:
+   ```powershell
+   npm run build
+   docker build -t ghcr.io/faiyyajansari1466/gdsl-exchange-web:latest -f docker/web.Dockerfile .
+   docker push ghcr.io/faiyyajansari1466/gdsl-exchange-web:latest
+   ```
+
+2. **Deploy on Droplet**:
+   ```bash
+   ssh root@139.59.30.70
+   kubectl rollout restart deployment/gdsl-web -n gdsl-exchange
+   ```
+
+For full operational monitoring, live logs, and rollback instructions, refer to [docs/OPERATIONS_AND_DEPLOYMENT_GUIDE.md](OPERATIONS_AND_DEPLOYMENT_GUIDE.md).
