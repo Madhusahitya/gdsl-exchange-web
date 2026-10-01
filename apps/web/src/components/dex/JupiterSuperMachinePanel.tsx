@@ -158,6 +158,9 @@ export function JupiterSuperMachinePanel({
   const scanModeRef = useRef(scanMode)
   scanModeRef.current = scanMode
   const feedRef = useRef<HTMLDivElement>(null)
+  /** Bumped on every save so a settings GET that started earlier cannot flip the switch back. */
+  const settingsEpoch = useRef(0)
+  const saveFlight = useRef(0)
   const [agentCursor, setAgentCursor] = useState({ x: 12, y: 18, visible: false })
   const cursorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -176,9 +179,11 @@ export function JupiterSuperMachinePanel({
   const socket = useSocket()
 
   const refresh = useCallback(async () => {
+    const seen = settingsEpoch.current
     try {
       // Settings first so the toggle hydrates even if status is slow (it can take 10–20s).
       const s = await dexJupiter.superMachineSettings()
+      if (seen !== settingsEpoch.current || saveFlight.current > 0) return
       setSettings(s)
       writeCachedEnabled(s.enabled)
       setHydrated(true)
@@ -231,6 +236,7 @@ export function JupiterSuperMachinePanel({
       })
     }
     const onSettings = (next: JupiterSuperMachineSettings) => {
+      if (saveFlight.current > 0) return
       setSettings(next)
       writeCachedEnabled(next.enabled)
       setHydrated(true)
@@ -280,11 +286,16 @@ export function JupiterSuperMachinePanel({
     // Optimistic merge for UI only — PUT sends the patch alone so defaults
     // (enabled:false on remount) cannot wipe a running Super Machine.
     const prevEnabled = settings.enabled
+    settingsEpoch.current += 1
+    const epoch = settingsEpoch.current
+    saveFlight.current += 1
     setSettings((cur) => ({ ...cur, ...patch }))
     if (patch.enabled !== undefined) writeCachedEnabled(Boolean(patch.enabled))
     setSaving(true)
+    let failed = false
     try {
       const saved = await dexJupiter.saveSuperMachineSettings(patch)
+      if (epoch !== settingsEpoch.current) return
       setSettings(saved)
       writeCachedEnabled(saved.enabled)
       setHydrated(true)
@@ -293,14 +304,16 @@ export function JupiterSuperMachinePanel({
       } else if (!saved.enabled && prevEnabled) {
         toast.info('Super Machine stopped')
       }
-      if (patch.enabled !== undefined) {
-        void refresh()
-      }
     } catch {
+      failed = true
       toast.error('Failed to save settings')
-      await refresh()
     } finally {
-      setSaving(false)
+      saveFlight.current = Math.max(0, saveFlight.current - 1)
+      if (saveFlight.current === 0) setSaving(false)
+    }
+    if (failed) {
+      settingsEpoch.current += 1
+      await refresh()
     }
   }
 
@@ -367,7 +380,7 @@ export function JupiterSuperMachinePanel({
             )}
           />
           <span className="text-sm font-medium text-zinc-100">Super Machine</span>
-          {toggleOn && hydrated && (
+          {toggleOn && hydrated && !settings.emergencyStop && (
             <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[9px] text-violet-300">LIVE</span>
           )}
           {!hydrated ? (
@@ -379,17 +392,19 @@ export function JupiterSuperMachinePanel({
             type="checkbox"
             className="peer sr-only"
             checked={toggleOn}
-            disabled={settings.emergencyStop || saving}
+            disabled={saving}
             onChange={(e) => {
               const turningOn = e.target.checked
               if (!turningOn) {
                 // Disable-only payload — never hitch watchSymbol, which can 400 the whole PUT.
-                void save({ enabled: false })
+                // Also clear emergency stop so the next enable is not left paused.
+                void save({ enabled: false, emergencyStop: false })
                 return
               }
               const lock = scanMode === 'pair-lock' ? toWatchSymbol(normalizedWatch ?? settings.watchSymbol) : null
               void save({
                 enabled: true,
+                emergencyStop: false,
                 watchSymbol: lock,
               })
             }}
